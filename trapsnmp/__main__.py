@@ -1,12 +1,12 @@
-"""Run the Trapwell gateway and its console."""
+"""Run the trapsnmp gateway and its console."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 
-from trapwell.service import Service
-from trapwell.web import serve
+from trapsnmp.service import Service
+from trapsnmp.web import serve
 
 
 async def _amain() -> None:
@@ -21,7 +21,7 @@ async def _amain() -> None:
         try:
             await starter
         except Exception:
-            logging.getLogger("trapwell").exception("gateway start failed")
+            logging.getLogger("trapsnmp").exception("gateway start failed")
 
     asyncio.create_task(_watch())
     await serve(service)

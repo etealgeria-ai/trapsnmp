@@ -1,4 +1,4 @@
-# Trapwell
+# trapsnmp
 
 Python gateway that receives SNMP traps and informs, then publishes each one as OPC UA variables and a `SnmpTrapEvent`.
 
@@ -10,14 +10,14 @@ Requires Python 3.10+.
 
 ```bash
 pip install -r requirements.txt
-python -m trapwell
+python -m trapsnmp
 ```
 
 - Console: `http://127.0.0.1:8080/`
 - SNMP traps: UDP 162, or 1162 if 162 is unavailable
-- OPC UA: `opc.tcp://127.0.0.1:4840/trapwell/` (anonymous, security None)
-- Namespace: `urn:trapwell:snmp`
+- OPC UA: `opc.tcp://127.0.0.1:4840/trapsnmp/` (anonymous, security None)
+- Namespace: `urn:trapsnmp:snmp`
 
-The default SNMPv3 user is `trapwell`, authPriv, SHA passphrase `trapwell-auth`, AES passphrase `trapwell-priv`. Communities `public` and `private` are accepted. More communities and users can be added from the console.
+The default SNMPv3 user is `trapsnmp`, authPriv, SHA passphrase `trapsnmp-auth`, AES passphrase `trapsnmp-priv`. Communities `public` and `private` are accepted. More communities and users can be added from the console.
 
-Each trap is written under `Objects/Trapwell` (`Latest.*`, recent slots, gateway counters) and raised as `SnmpTrapEvent`. An optional upstream client can also write the trap JSON to another OPC UA node.
+Each trap is written under `Objects/trapsnmp` (`Latest.*`, recent slots, gateway counters) and raised as `SnmpTrapEvent`. An optional upstream client can also write the trap JSON to another OPC UA node.

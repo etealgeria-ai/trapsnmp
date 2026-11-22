@@ -9,11 +9,11 @@ import re
 from collections import deque
 from datetime import datetime, timezone
 
-from trapwell.catalog import OID_RE, PRESETS, classify_trap, display_value, oid_name
-from trapwell.opcua_out import NS_URI, OpcuaBridge
-from trapwell.snmp_in import SnmpTrapIn
+from trapsnmp.catalog import OID_RE, PRESETS, classify_trap, display_value, oid_name
+from trapsnmp.opcua_out import NS_URI, OpcuaBridge
+from trapsnmp.snmp_in import SnmpTrapIn
 
-log = logging.getLogger("trapwell")
+log = logging.getLogger("trapsnmp")
 
 _OID = re.compile(OID_RE)
 _MAX_BINDS = 24
@@ -79,7 +79,7 @@ class Service:
                 "eventCount": self.opc.event_count,
                 "error": self.opc.error,
                 "nodes": {
-                    "object": self.opc.node_ids.get("Trapwell", "ns=2;s=Trapwell"),
+                    "object": self.opc.node_ids.get("trapsnmp", "ns=2;s=trapsnmp"),
                     "trapOid": self.opc.node_ids.get("Latest.TrapOid", ""),
                     "message": self.opc.node_ids.get("Latest.Message", ""),
                     "varbinds": self.opc.node_ids.get("Latest.Varbinds", ""),
@@ -103,7 +103,7 @@ class Service:
         }
 
     async def inject_preset(self, preset_id: str, community: str | None = None) -> dict:
-        from trapwell.catalog import PRESET_BY_ID
+        from trapsnmp.catalog import PRESET_BY_ID
 
         preset = PRESET_BY_ID.get(preset_id)
         if preset is None:

@@ -35,7 +35,7 @@ from pysnmp.proto.mpmod.rfc3412 import SNMPv3Message
 from pysnmp.proto.secmod.rfc3414.service import UsmSecurityParameters
 from pysnmp.smi.error import NoSuchInstanceError
 
-log = logging.getLogger("trapwell.snmp")
+log = logging.getLogger("trapsnmp.snmp")
 
 OnTrap = Callable[[dict, list[tuple[str, str, str]]], Awaitable[None]]
 
@@ -62,12 +62,12 @@ PRIV_PROTOCOLS = {
 LEVELS = {1: "noAuthNoPriv", 2: "authNoPriv", 3: "authPriv"}
 
 DEFAULT_USER = {
-    "name": "trapwell",
+    "name": "trapsnmp",
     "level": "authPriv",
     "auth": "SHA",
-    "authKey": "trapwell-auth",
+    "authKey": "trapsnmp-auth",
     "priv": "AES",
-    "privKey": "trapwell-priv",
+    "privKey": "trapsnmp-priv",
 }
 
 

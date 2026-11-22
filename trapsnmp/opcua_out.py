@@ -9,9 +9,9 @@ from datetime import datetime, timezone
 
 from asyncua import Client, Server, ua
 
-log = logging.getLogger("trapwell.opcua")
+log = logging.getLogger("trapsnmp.opcua")
 
-NS_URI = "urn:trapwell:snmp"
+NS_URI = "urn:trapsnmp:snmp"
 SLOT_COUNT = 8
 
 LATEST_FIELDS = (
@@ -42,7 +42,7 @@ class OpcuaBridge:
     def __init__(self) -> None:
         self.ready = False
         self.error: str | None = None
-        self.endpoint = "opc.tcp://127.0.0.1:4840/trapwell/"
+        self.endpoint = "opc.tcp://127.0.0.1:4840/trapsnmp/"
         self.namespace_index = 0
         self.event_count = 0
         self.nodes: dict = {}
@@ -65,18 +65,18 @@ class OpcuaBridge:
     async def start(self) -> None:
         server = Server()
         await server.init()
-        await server.set_application_uri("urn:trapwell:gateway")
-        server.product_uri = "urn:trapwell:snmp-opcua"
-        server.manufacturer_name = "Trapwell"
-        server.set_server_name("Trapwell SNMP Gateway")
+        await server.set_application_uri("urn:trapsnmp:gateway")
+        server.product_uri = "urn:trapsnmp:snmp-opcua"
+        server.manufacturer_name = "trapsnmp"
+        server.set_server_name("trapsnmp SNMP Gateway")
         server.set_endpoint(self.endpoint)
         server.socket_address = ("0.0.0.0", 4840)
         server.set_security_policy([ua.SecurityPolicyType.NoSecurity])
         try:
             idx = await server.register_namespace(NS_URI)
             objects = server.nodes.objects
-            root = await objects.add_object(ua.NodeId("Trapwell", idx), "Trapwell")
-            self.node_ids["Trapwell"] = f"ns={idx};s=Trapwell"
+            root = await objects.add_object(ua.NodeId("trapsnmp", idx), "trapsnmp")
+            self.node_ids["trapsnmp"] = f"ns={idx};s=trapsnmp"
             gateway = await root.add_object(ua.NodeId("Gateway", idx), "Gateway")
             latest = await root.add_object(ua.NodeId("Latest", idx), "Latest")
             recent = await root.add_object(ua.NodeId("Recent", idx), "Recent")

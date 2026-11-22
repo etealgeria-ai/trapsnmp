@@ -8,10 +8,10 @@ from pathlib import Path
 
 from aiohttp import web
 
-from trapwell.catalog import PRESETS
-from trapwell.service import Service
+from trapsnmp.catalog import PRESETS
+from trapsnmp.service import Service
 
-log = logging.getLogger("trapwell.web")
+log = logging.getLogger("trapsnmp.web")
 
 STATIC = Path(__file__).resolve().parent / "static"
 INDEX = (STATIC / "index.html").read_text(encoding="utf-8")

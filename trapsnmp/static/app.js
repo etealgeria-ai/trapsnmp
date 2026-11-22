@@ -39,7 +39,7 @@ async function tick() {
 }
 
 function render(data) {
-  window.__trapwell = data;
+  window.__trapsnmp = data;
   const snmp = data.snmp || {};
   const opc = data.opcua || {};
   const dot = document.getElementById("status-dot");
@@ -74,7 +74,7 @@ function render(data) {
   renderUsers(snmp.users || []);
 
   document.getElementById("opc-endpoint").textContent = opc.ready ? opc.endpoint : (opc.error || "Starting");
-  document.getElementById("opc-ns").textContent = opc.namespace || "urn:trapwell:snmp";
+  document.getElementById("opc-ns").textContent = opc.namespace || "urn:trapsnmp:snmp";
   document.getElementById("opc-node").textContent = opc.nodes?.trapOid || "—";
   document.getElementById("opc-object").textContent = opc.nodes?.object || "—";
   document.getElementById("up-status").textContent = data.upstream?.enabled
@@ -238,7 +238,7 @@ document.getElementById("feed").addEventListener("click", (event) => {
   const button = event.target.closest("[data-id]");
   if (!button) return;
   state.selected = Number(button.dataset.id);
-  if (window.__trapwell) render(window.__trapwell);
+  if (window.__trapsnmp) render(window.__trapsnmp);
 });
 
 document.getElementById("community-form").addEventListener("submit", async (event) => {
@@ -311,7 +311,7 @@ document.getElementById("custom-form").addEventListener("submit", async (event) 
 });
 
 document.getElementById("use-inbox").addEventListener("click", () => {
-  const data = window.__trapwell;
+  const data = window.__trapsnmp;
   if (!data?.opcua) return;
   document.getElementById("up-endpoint").value = data.opcua.endpoint || "";
   document.getElementById("up-node").value = data.opcua.nodes?.inbox || "";

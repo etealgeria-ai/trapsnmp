@@ -149,7 +149,7 @@ PRESETS: list[dict] = [
     {
         "id": "v3LinkDown",
         "label": "SNMPv3 link down",
-        "detail": "authPriv SHA + AES as user trapwell",
+        "detail": "authPriv SHA + AES as user trapsnmp",
         "version": "3",
         "trap_oid": "1.3.6.1.6.3.1.1.5.3",
         "varbinds": [
