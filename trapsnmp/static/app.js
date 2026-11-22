@@ -108,11 +108,85 @@ function render(data) {
   feed.scrollTop = scroll;
   renderReadback(data.readback);
   renderDetail(traps.find((trap) => trap.id === state.selected));
+  renderDiag(data);
   const trace = document.getElementById("trace");
   const lines = data.trace || [];
   trace.innerHTML = lines.length
     ? lines.map((line) => `<li>${esc(line)}</li>`).join("")
     : "<li>The path log fills as traps move from SNMP into OPC UA.</li>";
+}
+
+function renderDiag(data) {
+  const host = document.getElementById("diag-checks");
+  const meta = document.getElementById("diag-meta");
+  if (!host) return;
+  const snmp = data.snmp || {};
+  const opc = data.opcua || {};
+  const readback = data.readback || {};
+  const upstream = data.upstream || {};
+  const users = (snmp.users || []).map((user) => `${user.name} ${user.level}`).join(", ");
+  const last = (data.traps || [])[0];
+  const rows = [
+    check(snmp.listening, "SNMP socket", snmp.listening ? `UDP ${snmp.port}` : (snmp.error || "Not listening")),
+    check(snmp.port === 162 ? "pass" : "warn", "UDP port", snmp.port === 162 ? "162" : (snmp.note || `Using ${snmp.port || "—"}`)),
+    check((snmp.communities || []).length > 0, "Communities", (snmp.communities || []).join(", ") || "None"),
+    check((snmp.users || []).length > 0, "SNMPv3", users || "No user"),
+    check(opc.ready, "OPC UA server", opc.ready ? `${opc.endpoint} · ${opc.security}` : (opc.error || "Starting")),
+    check(readback.ok, "Client read", readback.ok ? "Latest read succeeded" : (readback.error || "No read")),
+  ];
+  if (last && readback.ok) {
+    const matched = readback.trapOid === last.trapOid;
+    rows.push(check(matched, "Latest node", matched ? last.trapName : `Read ${readback.trapOid || "empty"}`));
+  } else {
+    rows.push(check("warn", "Latest node", "No trap received yet"));
+  }
+  if (upstream.enabled) {
+    const bad = /fail|error|Bad/i.test(upstream.status || "");
+    rows.push(check(!bad, "Forward", upstream.status || "Armed"));
+  } else {
+    rows.push(check("warn", "Forward", "Not armed"));
+  }
+  host.innerHTML = `<div class="checks">${rows.map((row) => `
+    <div class="check">
+      <span class="check-state ${row.kind}">${row.kind === "pass" ? "Pass" : row.kind === "warn" ? "Check" : "Fail"}</span>
+      <span class="check-name">${esc(row.name)}</span>
+      <span class="check-detail">${esc(row.detail)}</span>
+    </div>
+  `).join("")}</div>`;
+  if (meta) {
+    meta.textContent = `trapsnmp ${data.version || ""} · up ${uptime(data.startedAt)}`;
+  }
+}
+
+function check(kind, name, detail) {
+  const label = kind === true || kind === "pass" ? "pass" : kind === "warn" ? "warn" : "fail";
+  return { kind: label, name, detail };
+}
+
+function uptime(iso) {
+  const then = Date.parse(iso);
+  if (!then) return "—";
+  const seconds = Math.max(0, Math.round((Date.now() - then) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+function renderReport(report) {
+  const host = document.getElementById("diag-report");
+  if (!host) return;
+  const steps = report.steps || [];
+  host.innerHTML = `
+    <h3 class="subhead">Last loopback · ${esc(report.ms)} ms</h3>
+    <div class="checks">${steps.map((step) => `
+      <div class="check">
+        <span class="check-state ${step.ok ? "pass" : "fail"}">${step.ok ? "Pass" : "Fail"}</span>
+        <span class="check-name">${esc(step.name)}</span>
+        <span class="check-detail">${esc(step.detail)}</span>
+      </div>
+    `).join("")}</div>
+  `;
 }
 
 function renderReadback(readback) {
@@ -414,7 +488,35 @@ document.querySelector(".nav").addEventListener("click", (event) => {
 });
 
 const initial = (location.hash || "").replace("#", "");
-if (["monitor", "send", "access", "publish"].includes(initial)) showView(initial);
+if (["monitor", "send", "access", "publish", "diag"].includes(initial)) showView(initial);
+
+document.getElementById("run-diag").addEventListener("click", async () => {
+  const button = document.getElementById("run-diag");
+  if (state.sending) return;
+  state.sending = true;
+  button.disabled = true;
+  setBench("Running loopback…");
+  try {
+    const response = await fetch("/api/diag", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const report = await response.json().catch(() => ({}));
+    if (!response.ok && !report.steps) {
+      throw new Error(report.error || "Loopback failed");
+    }
+    renderReport(report);
+    setBench(report.ok ? "Loopback passed." : "Loopback failed.", !report.ok);
+    showView("diag");
+    await tick();
+  } catch (err) {
+    setBench(err.message, true);
+  } finally {
+    state.sending = false;
+    button.disabled = false;
+  }
+});
 
 tick();
 setInterval(tick, 1000);

@@ -34,6 +34,7 @@
       <button type="button" class="nav-btn" data-view="send" aria-selected="false">Send</button>
       <button type="button" class="nav-btn" data-view="access" aria-selected="false">Access</button>
       <button type="button" class="nav-btn" data-view="publish" aria-selected="false">Publish</button>
+      <button type="button" class="nav-btn" data-view="diag" aria-selected="false">Diag</button>
     </nav>
     <p class="note flash" id="flash" role="status"></p>
 
@@ -264,6 +265,25 @@
           </div>
         </form>
         <p class="note" id="up-status">Not forwarding</p>
+      </section>
+    </div>
+
+    <div class="view" data-view-panel="diag" hidden>
+      <section class="panel">
+        <div class="panel-head">
+          <p class="index">01</p>
+          <h2>Diagnostics</h2>
+        </div>
+        <p class="hint" id="diag-meta">Checking the receiver and the OPC UA server.</p>
+        <div id="diag-checks">
+          <p class="empty">Waiting for the gateway.</p>
+        </div>
+        <h3 class="subhead">Loopback</h3>
+        <p class="hint">Sends a real SNMPv2c warmStart through UDP, then checks the OPC UA write, the event, and a client read.</p>
+        <div class="actions">
+          <button type="button" class="primary" id="run-diag">Run loopback</button>
+        </div>
+        <div id="diag-report"></div>
       </section>
     </div>
     <script src="/static/app.js"></script>

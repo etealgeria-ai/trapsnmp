@@ -549,13 +549,47 @@ td.oid {
   font-weight: 500;
 }
 
+.checks {
+  display: flex;
+  flex-direction: column;
+}
+
+.check {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(8rem, 11rem) minmax(0, 1fr);
+  gap: 8px 12px;
+  align-items: baseline;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.check-state {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.check-state.pass { color: var(--brass-2); }
+.check-state.warn { color: var(--brass); }
+.check-state.fail { color: var(--alarm); }
+
+.check-name { font-weight: 600; }
+
+.check-detail {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 860px) {
   .top, .workspace { grid-template-columns: 1fr; }
   .metrics { grid-template-columns: 1fr 1fr; }
   .path { grid-template-columns: 1fr; }
   .status { white-space: normal; }
   .presets, .bind { grid-template-columns: 1fr; }
-  .facts div, .kv { grid-template-columns: 1fr; }
+  .facts div, .kv, .check { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {

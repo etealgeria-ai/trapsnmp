@@ -125,6 +125,16 @@ async def handle_user(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "user": created, "users": service.snmp.users})
 
 
+async def handle_diag(request: web.Request) -> web.Response:
+    service: Service = request.app["service"]
+    try:
+        report = await service.diagnose()
+    except Exception as exc:
+        log.exception("diag failed")
+        return _json_error(str(exc), 500)
+    return web.json_response(report)
+
+
 async def handle_upstream(request: web.Request) -> web.Response:
     service: Service = request.app["service"]
     try:
@@ -157,6 +167,7 @@ async def serve(service: Service) -> None:
     app.router.add_post("/api/inject", handle_inject)
     app.router.add_post("/api/community", handle_community)
     app.router.add_post("/api/user", handle_user)
+    app.router.add_post("/api/diag", handle_diag)
     app.router.add_post("/api/upstream", handle_upstream)
     app.router.add_static("/static", STATIC, show_index=False)
     runner = web.AppRunner(app)

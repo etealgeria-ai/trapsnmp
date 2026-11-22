@@ -9,6 +9,7 @@ import re
 from collections import deque
 from datetime import datetime, timezone
 
+from trapsnmp import __version__
 from trapsnmp.catalog import OID_RE, PRESETS, classify_trap, display_value, oid_name
 from trapsnmp.opcua_out import NS_URI, OpcuaBridge
 from trapsnmp.snmp_in import SnmpTrapIn
@@ -32,6 +33,7 @@ class Service:
         self._pending: asyncio.Future | None = None
         self._expect = ""
         self._started = False
+        self.started_at = datetime.now(timezone.utc)
 
     async def start(self) -> None:
         if self._started:
@@ -100,6 +102,68 @@ class Service:
                 {"id": item["id"], "label": item["label"], "detail": item["detail"]}
                 for item in PRESETS
             ],
+            "version": __version__,
+            "startedAt": self.started_at.isoformat(timespec="seconds"),
+        }
+
+    async def diagnose(self) -> dict:
+        started = datetime.now(timezone.utc)
+        steps: list[dict] = []
+
+        def step(name: str, ok: bool, detail: str) -> None:
+            steps.append({"name": name, "ok": bool(ok), "detail": detail})
+
+        step(
+            "SNMP socket",
+            self.snmp.listening,
+            f"UDP {self.snmp.port}" if self.snmp.listening else (self.snmp.error or "Not listening"),
+        )
+        step(
+            "OPC UA server",
+            self.opc.ready,
+            self.opc.endpoint if self.opc.ready else (self.opc.error or "Not ready"),
+        )
+        if self.snmp.listening and self.opc.ready:
+            try:
+                record = await self.inject_custom(
+                    community=self.snmp.communities[0] if self.snmp.communities else "public",
+                    version="2c",
+                    trap_oid="1.3.6.1.6.3.1.1.5.2",
+                    varbinds=[("1.3.6.1.2.1.1.5.0", "string", "trapsnmp-diag")],
+                )
+            except (ValueError, RuntimeError) as exc:
+                step("Loopback trap", False, str(exc))
+                record = None
+            else:
+                published = record.get("opcua") or {}
+                step(
+                    "Loopback trap",
+                    True,
+                    f"{record.get('trapName')} {record.get('version')} from {record.get('source')}",
+                )
+                step(
+                    "OPC UA write",
+                    not published.get("error") and int(published.get("written") or 0) > 0,
+                    published.get("error")
+                    or f"{published.get('written', 0)} nodes written",
+                )
+                step(
+                    "Event",
+                    bool(published.get("event")),
+                    "SnmpTrapEvent fired" if published.get("event") else "No event",
+                )
+                readback = await self.opc.readback()
+                matched = bool(readback.get("ok") and readback.get("trapOid") == record.get("trapOid"))
+                step(
+                    "Readback",
+                    matched,
+                    readback.get("trapName") or readback.get("error") or "Empty read",
+                )
+        elapsed = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
+        return {
+            "ok": bool(steps) and all(item["ok"] for item in steps),
+            "steps": steps,
+            "ms": elapsed,
         }
 
     async def inject_preset(self, preset_id: str, community: str | None = None) -> dict:
