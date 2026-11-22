@@ -1,4 +1,4 @@
-const state = { selected: null, sending: false };
+const state = { selected: null, sending: false, view: "monitor" };
 
 function esc(value) {
   return String(value ?? "")
@@ -58,8 +58,12 @@ function render(data) {
     text.textContent = "Opening the trap receiver";
   }
   const note = document.getElementById("snmp-note");
-  const base = "Agents send traps to this gateway. The bench below sends a real UDP trap into the same path.";
-  note.textContent = snmp.note ? `${base} ${snmp.note}` : base;
+  const base = "The bench sends a real UDP trap into the same receiver agents use.";
+  if (note) note.textContent = snmp.note ? `${base} ${snmp.note}` : base;
+  const pathSnmp = document.getElementById("path-snmp");
+  const pathOpc = document.getElementById("path-opc");
+  if (pathSnmp) pathSnmp.textContent = snmp.listening ? `UDP ${snmp.port}` : "Down";
+  if (pathOpc) pathOpc.textContent = opc.ready ? "Publishing" : "Starting";
   document.getElementById("count-traps").textContent = data.counts?.traps ?? 0;
   document.getElementById("count-informs").textContent = data.counts?.informs ?? 0;
   document.getElementById("count-events").textContent = data.counts?.events ?? 0;
@@ -182,9 +186,26 @@ async function post(url, body) {
 }
 
 function setBench(message, bad) {
-  const note = document.getElementById("bench-note");
-  note.textContent = message || "";
-  note.className = bad ? "note bad" : "note";
+  for (const id of ["flash", "bench-note"]) {
+    const note = document.getElementById(id);
+    if (!note) continue;
+    note.textContent = message || "";
+    note.className = id === "flash"
+      ? (bad ? "note flash bad" : "note flash")
+      : (bad ? "note bad" : "note");
+  }
+}
+
+function showView(name) {
+  state.view = name;
+  document.querySelectorAll("[data-view-panel]").forEach((panel) => {
+    panel.hidden = panel.getAttribute("data-view-panel") !== name;
+  });
+  document.querySelectorAll(".nav-btn").forEach((button) => {
+    const on = button.dataset.view === name;
+    button.classList.toggle("active", on);
+    button.setAttribute("aria-selected", on ? "true" : "false");
+  });
 }
 
 function renderUsers(users) {
@@ -225,6 +246,7 @@ document.getElementById("presets").addEventListener("click", async (event) => {
     const data = await post("/api/inject", { preset: button.dataset.preset });
     state.selected = data.trap?.id ?? state.selected;
     setBench(`${data.trap?.trapName || "Trap"} arrived and was published.`);
+    showView("monitor");
     await tick();
   } catch (err) {
     setBench(err.message, true);
@@ -302,6 +324,7 @@ document.getElementById("custom-form").addEventListener("submit", async (event) 
     });
     state.selected = data.trap?.id ?? state.selected;
     setBench(`${data.trap?.trapName || "Trap"} arrived and was published.`);
+    showView("monitor");
     await tick();
   } catch (err) {
     setBench(err.message, true);
@@ -375,6 +398,23 @@ document.getElementById("user-form").addEventListener("submit", async (event) =>
     setBench(err.message, true);
   }
 });
+
+function syncUserFields() {
+  const level = document.getElementById("user-level").value;
+  document.getElementById("auth-fields").hidden = level === "noAuthNoPriv";
+  document.getElementById("priv-fields").hidden = level !== "authPriv";
+}
+
+document.getElementById("user-level").addEventListener("change", syncUserFields);
+
+document.querySelector(".nav").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-view]");
+  if (!button) return;
+  showView(button.dataset.view);
+});
+
+const initial = (location.hash || "").replace("#", "");
+if (["monitor", "send", "access", "publish"].includes(initial)) showView(initial);
 
 tick();
 setInterval(tick, 1000);

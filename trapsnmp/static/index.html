@@ -21,14 +21,21 @@
         </div>
       </div>
       <p class="lede">
-        Listens for SNMPv1, SNMPv2c, and SNMPv3 traps, then publishes each one as OPC UA variables and a
-        <span class="mono">SnmpTrapEvent</span>.
+        Watch traps arrive, send a test into the same path, and read the result back from OPC UA.
       </p>
       <p class="status" id="status">
         <span class="dot" id="status-dot"></span>
         <span id="status-text">Opening the trap receiver</span>
       </p>
     </header>
+
+    <nav class="nav" aria-label="Console">
+      <button type="button" class="nav-btn active" data-view="monitor" aria-selected="true">Monitor</button>
+      <button type="button" class="nav-btn" data-view="send" aria-selected="false">Send</button>
+      <button type="button" class="nav-btn" data-view="access" aria-selected="false">Access</button>
+      <button type="button" class="nav-btn" data-view="publish" aria-selected="false">Publish</button>
+    </nav>
+    <p class="note flash" id="flash" role="status"></p>
 
     <section class="metrics" aria-label="Counts">
       <article class="metric">
@@ -49,26 +56,123 @@
       </article>
     </section>
 
-    <div class="workspace">
-      <section class="panel" aria-labelledby="in-title">
+    <div class="view" data-view-panel="monitor">
+      <ol class="path" aria-label="Path">
+        <li>
+          <span>SNMP in</span>
+          <strong id="path-snmp">Waiting</strong>
+        </li>
+        <li>
+          <span>Gateway</span>
+          <strong>trapsnmp</strong>
+        </li>
+        <li>
+          <span>OPC UA out</span>
+          <strong id="path-opc">Starting</strong>
+        </li>
+      </ol>
+      <div class="workspace">
+        <section class="panel" aria-labelledby="feed-title">
+          <div class="panel-head">
+            <p class="index">01</p>
+            <h2 id="feed-title">Arrived</h2>
+          </div>
+          <p class="hint">Newest first. Select one to see its varbinds.</p>
+          <div class="feed" id="feed">
+            <p class="empty">No traps yet. Use Send to put one on the wire.</p>
+          </div>
+        </section>
+        <section class="panel" aria-labelledby="detail-title">
+          <div class="panel-head">
+            <p class="index">02</p>
+            <h2 id="detail-title">Selected trap</h2>
+          </div>
+          <div id="detail">
+            <p class="empty">Choose a trap, or send one from the bench.</p>
+          </div>
+          <h3 class="subhead">Read back from OPC UA</h3>
+          <div id="readback">
+            <p class="empty">Waiting for the OPC UA server.</p>
+          </div>
+        </section>
+      </div>
+      <section class="panel trace-panel" aria-labelledby="trace-title">
+        <div class="panel-head">
+          <p class="index">03</p>
+          <h2 id="trace-title">Path log</h2>
+        </div>
+        <ol class="trace" id="trace">
+          <li>The path log fills as traps move from SNMP into OPC UA.</li>
+        </ol>
+      </section>
+    </div>
+
+    <div class="view" data-view-panel="send" hidden>
+      <section class="panel">
         <div class="panel-head">
           <p class="index">01</p>
-          <h2 id="in-title">Receiver</h2>
+          <h2>Send a trap</h2>
         </div>
-        <p class="hint" id="snmp-note">Agents send traps to this gateway. The bench below sends a real UDP trap into the same path.</p>
-        <div class="chips" id="communities" aria-label="Allowed communities"></div>
-        <form class="inline" id="community-form">
-          <label class="field grow">
-            <span>Allow community</span>
-            <input name="community" autocomplete="off" maxlength="64" placeholder="monitor" />
+        <p class="hint" id="snmp-note">The bench sends a real UDP trap into the same receiver agents use.</p>
+        <div class="presets" id="presets"><!--PRESETS--></div>
+        <p class="note" id="bench-note" role="status"></p>
+        <h3 class="subhead">Custom trap</h3>
+        <form id="custom-form">
+          <div class="split">
+            <label class="field" id="community-field">
+              <span>Community</span>
+              <input name="community" value="public" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>Version</span>
+              <select name="version" id="version">
+                <option value="2c">SNMPv2c</option>
+                <option value="1">SNMPv1</option>
+                <option value="3">SNMPv3</option>
+              </select>
+            </label>
+          </div>
+          <label class="field" id="user-field" hidden>
+            <span>USM user</span>
+            <select name="user" id="v3-user"></select>
           </label>
-          <button type="submit" class="ghost">Add</button>
+          <label class="field">
+            <span>Trap OID</span>
+            <input name="trapOid" value="1.3.6.1.6.3.1.1.5.3" spellcheck="false" />
+          </label>
+          <div id="binds"></div>
+          <div class="actions">
+            <button type="button" class="ghost" id="add-bind">Add varbind</button>
+            <button type="submit" class="primary">Send trap</button>
+          </div>
         </form>
-        <h3 class="subhead">SNMPv3 users</h3>
-        <div class="chips" id="users" aria-label="SNMPv3 users"></div>
-        <p class="hint" id="user-hint">A default authPriv user is loaded with the receiver.</p>
-        <details class="custom">
-          <summary>Add SNMPv3 user</summary>
+      </section>
+    </div>
+
+    <div class="view" data-view-panel="access" hidden>
+      <div class="workspace">
+        <section class="panel" aria-labelledby="community-title">
+          <div class="panel-head">
+            <p class="index">01</p>
+            <h2 id="community-title">Communities</h2>
+          </div>
+          <p class="hint">SNMPv1 and SNMPv2c traps must use one of these community strings.</p>
+          <div class="chips" id="communities" aria-label="Allowed communities"></div>
+          <form class="inline" id="community-form">
+            <label class="field grow">
+              <span>Allow community</span>
+              <input name="community" autocomplete="off" maxlength="64" placeholder="monitor" />
+            </label>
+            <button type="submit" class="ghost">Add</button>
+          </form>
+        </section>
+        <section class="panel" aria-labelledby="user-title">
+          <div class="panel-head">
+            <p class="index">02</p>
+            <h2 id="user-title">SNMPv3 users</h2>
+          </div>
+          <div class="chips" id="users" aria-label="SNMPv3 users"></div>
+          <p class="hint" id="user-hint">A default authPriv user is loaded with the receiver.</p>
           <form id="user-form">
             <div class="split">
               <label class="field">
@@ -77,14 +181,14 @@
               </label>
               <label class="field">
                 <span>Level</span>
-                <select name="level">
+                <select name="level" id="user-level">
                   <option value="authPriv">authPriv</option>
                   <option value="authNoPriv">authNoPriv</option>
                   <option value="noAuthNoPriv">noAuthNoPriv</option>
                 </select>
               </label>
             </div>
-            <div class="split">
+            <div class="split" id="auth-fields">
               <label class="field">
                 <span>Auth</span>
                 <select name="auth">
@@ -98,7 +202,7 @@
                 <input name="authKey" autocomplete="off" placeholder="at least 8 characters" />
               </label>
             </div>
-            <div class="split">
+            <div class="split" id="priv-fields">
               <label class="field">
                 <span>Privacy</span>
                 <select name="priv">
@@ -113,51 +217,15 @@
             </div>
             <button type="submit" class="primary">Add user</button>
           </form>
-        </details>
-        <div class="presets" id="presets"><!--PRESETS--></div>
-        <p class="note" id="bench-note" role="status"></p>
-        <details class="custom">
-          <summary>Custom trap</summary>
-          <form id="custom-form">
-            <div class="split">
-              <label class="field" id="community-field">
-                <span>Community</span>
-                <input name="community" value="public" autocomplete="off" />
-              </label>
-              <label class="field">
-                <span>Version</span>
-                <select name="version" id="version">
-                  <option value="2c">SNMPv2c</option>
-                  <option value="1">SNMPv1</option>
-                  <option value="3">SNMPv3</option>
-                </select>
-              </label>
-            </div>
-            <label class="field" id="user-field" hidden>
-              <span>USM user</span>
-              <select name="user" id="v3-user"></select>
-            </label>
-            <label class="field">
-              <span>Trap OID</span>
-              <input name="trapOid" value="1.3.6.1.6.3.1.1.5.3" spellcheck="false" />
-            </label>
-            <div id="binds"></div>
-            <div class="actions">
-              <button type="button" class="ghost" id="add-bind">Add varbind</button>
-              <button type="submit" class="primary">Send trap</button>
-            </div>
-          </form>
-        </details>
-        <h3 class="subhead">Arrived</h3>
-        <div class="feed" id="feed">
-          <p class="empty">No traps yet.</p>
-        </div>
-      </section>
+        </section>
+      </div>
+    </div>
 
-      <section class="panel" aria-labelledby="out-title">
+    <div class="view" data-view-panel="publish" hidden>
+      <section class="panel">
         <div class="panel-head">
-          <p class="index">02</p>
-          <h2 id="out-title">OPC UA</h2>
+          <p class="index">01</p>
+          <h2>OPC UA</h2>
         </div>
         <p class="hint">Anonymous session, security None. Read <span class="mono">Latest</span> or subscribe to events on the trapsnmp object.</p>
         <dl class="facts" id="opc-facts">
@@ -178,14 +246,6 @@
             <dd class="mono" id="opc-object">—</dd>
           </div>
         </dl>
-        <h3 class="subhead">Read back from the server</h3>
-        <div id="readback">
-          <p class="empty">Waiting for the OPC UA server.</p>
-        </div>
-        <h3 class="subhead">Selected trap</h3>
-        <div id="detail">
-          <p class="empty">Choose a trap, or send one from the bench.</p>
-        </div>
         <h3 class="subhead">Forward as a client</h3>
         <p class="hint">Each new trap is also written, as JSON, to a node on any OPC UA server that accepts anonymous access.</p>
         <form id="forward-form">
@@ -206,16 +266,6 @@
         <p class="note" id="up-status">Not forwarding</p>
       </section>
     </div>
-
-    <section class="panel trace-panel" aria-labelledby="trace-title">
-      <div class="panel-head">
-        <p class="index">03</p>
-        <h2 id="trace-title">Path log</h2>
-      </div>
-      <ol class="trace" id="trace">
-        <li>The path log fills as traps move from SNMP into OPC UA.</li>
-      </ol>
-    </section>
     <script src="/static/app.js"></script>
   </body>
 </html>
