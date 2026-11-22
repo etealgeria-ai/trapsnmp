@@ -32,6 +32,17 @@ OID_NAMES: dict[str, str] = {
     "1.3.6.1.4.1.99999.1.3": "diskAlmostFull",
     "1.3.6.1.4.1.99999.1.3.1.0": "dskPath",
     "1.3.6.1.4.1.99999.1.3.2.0": "dskPercent",
+    "1.3.6.1.4.1.4130.10.2.5.1.2.1.1.1": "mIfLnLinkStatus",
+    "1.3.6.1.4.1.4130.10.2.5.1.2.1.1.2": "mIfLnInitStatus",
+    "1.3.6.1.4.1.4130.10.2.5.1.2.1.1.3": "mIfLnCurrentDeviceMode",
+    "1.3.6.1.4.1.4130.10.2.5.1.2.1.1.9": "mIfLnTemperature",
+    "1.3.6.1.4.1.4130.10.2.5.1.2.1.1.13": "mIfLnApInfoRssi",
+    "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.1": "mIfLnStatusConnRemAddress",
+    "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.2": "mIfLnStatusConnRemIpAddress",
+    "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.4": "mIfLnStatusConnRemLinkStatus",
+    "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.6": "mIfLnStatusConnRemRssi",
+    "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.19": "mIfLnStatusConnRemStatsName",
+    "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.23": "mIfLnStatusConnRemStatsDwnRssi",
 }
 
 # level, OPC UA severity (1–1000), display name
@@ -45,6 +56,10 @@ TRAP_META: dict[str, tuple[str, int, str]] = {
     "1.3.6.1.4.1.99999.1.1": ("critical", 850, "envTemperatureHigh"),
     "1.3.6.1.4.1.99999.1.2": ("critical", 880, "upsOnBattery"),
     "1.3.6.1.4.1.99999.1.3": ("warning", 600, "diskAlmostFull"),
+    "1.3.6.1.4.1.4130.10.2.5.1.2.1.1.1": ("warning", 600, "mIfLnLinkStatus"),
+    "1.3.6.1.4.1.4130.10.2.5.1.2.1.1.2": ("critical", 850, "mIfLnInitStatus"),
+    "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.4": ("warning", 650, "mIfLnStatusConnRemLinkStatus"),
+    "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.6": ("critical", 800, "mIfLnStatusConnRemRssi"),
 }
 
 IF_OPER = {
@@ -57,6 +72,37 @@ IF_OPER = {
     "7": "lowerLayerDown (7)",
 }
 IF_ADMIN = {"1": "up (1)", "2": "down (2)", "3": "testing (3)"}
+
+# MDS-IF-LN-MIB. The file defines no NOTIFICATION-TYPE, so a simulated trap
+# uses the status object that changed as snmpTrapOID and binds the related columns.
+_LN_IF = "1.3.6.1.4.1.4130.10.2.5.1.2.1.1"
+_LN_REM = "1.3.6.1.4.1.4130.10.2.5.1.2.2.1"
+_LN_PORT = "1"
+_LN_REMOTE = "1.0.26.139.1.2.3"
+
+LN_LINK = {
+    "0": "initializing (0)",
+    "1": "scanning (1)",
+    "2": "negotiating (2)",
+    "3": "authenticating (3)",
+    "4": "associated (4)",
+    "5": "disassociated (5)",
+}
+LN_INIT = {
+    "0": "off (0)",
+    "1": "initializing (1)",
+    "2": "discovering (2)",
+    "3": "reprogramming (3)",
+    "4": "configuring (4)",
+    "5": "complete (5)",
+    "6": "error (6)",
+}
+LN_MODE = {
+    "0": "remote (0)",
+    "1": "accessPoint (1)",
+    "2": "storeAndForward (2)",
+    "3": "test (3)",
+}
 
 PRESETS: list[dict] = [
     {
@@ -158,6 +204,91 @@ PRESETS: list[dict] = [
             ("1.3.6.1.2.1.2.2.1.8.4", "integer", "2"),
         ],
     },
+    {
+        "id": "geLnUp",
+        "group": "ge-ln",
+        "label": "LN associated",
+        "detail": "mIfLnLinkStatus associated, AP RSSI −67 dBm",
+        "version": "2c",
+        "trap_oid": f"{_LN_IF}.1",
+        "varbinds": [
+            (f"{_LN_IF}.1.{_LN_PORT}", "integer", "4"),
+            (f"{_LN_IF}.3.{_LN_PORT}", "integer", "1"),
+            (f"{_LN_IF}.13.{_LN_PORT}", "integer", "-67"),
+            (f"{_LN_IF}.9.{_LN_PORT}", "integer", "42"),
+        ],
+    },
+    {
+        "id": "geLnDown",
+        "group": "ge-ln",
+        "label": "LN disassociated",
+        "detail": "mIfLnLinkStatus disassociated, AP RSSI −96 dBm",
+        "version": "2c",
+        "trap_oid": f"{_LN_IF}.1",
+        "varbinds": [
+            (f"{_LN_IF}.1.{_LN_PORT}", "integer", "5"),
+            (f"{_LN_IF}.3.{_LN_PORT}", "integer", "1"),
+            (f"{_LN_IF}.13.{_LN_PORT}", "integer", "-96"),
+        ],
+    },
+    {
+        "id": "geLnInit",
+        "group": "ge-ln",
+        "label": "LN init error",
+        "detail": "mIfLnInitStatus error",
+        "version": "2c",
+        "trap_oid": f"{_LN_IF}.2",
+        "varbinds": [
+            (f"{_LN_IF}.2.{_LN_PORT}", "integer", "6"),
+            (f"{_LN_IF}.1.{_LN_PORT}", "integer", "0"),
+        ],
+    },
+    {
+        "id": "geRemoteUp",
+        "group": "ge-ln",
+        "label": "Remote associated",
+        "detail": "00:1A:8B:01:02:03 associated, RSSI −72 dBm",
+        "version": "2c",
+        "trap_oid": f"{_LN_REM}.4",
+        "varbinds": [
+            (f"{_LN_REM}.1.{_LN_REMOTE}", "string", "00:1A:8B:01:02:03"),
+            (f"{_LN_REM}.2.{_LN_REMOTE}", "string", "10.1.2.3"),
+            (f"{_LN_REM}.4.{_LN_REMOTE}", "integer", "4"),
+            (f"{_LN_REM}.6.{_LN_REMOTE}", "integer", "-72"),
+            (f"{_LN_REM}.19.{_LN_REMOTE}", "string", "ORBIT-1"),
+            (f"{_LN_REM}.23.{_LN_REMOTE}", "integer", "-78"),
+        ],
+    },
+    {
+        "id": "geRemoteDown",
+        "group": "ge-ln",
+        "label": "Remote disassociated",
+        "detail": "ORBIT-1 left the LN master",
+        "version": "2c",
+        "trap_oid": f"{_LN_REM}.4",
+        "varbinds": [
+            (f"{_LN_REM}.1.{_LN_REMOTE}", "string", "00:1A:8B:01:02:03"),
+            (f"{_LN_REM}.2.{_LN_REMOTE}", "string", "10.1.2.3"),
+            (f"{_LN_REM}.4.{_LN_REMOTE}", "integer", "5"),
+            (f"{_LN_REM}.6.{_LN_REMOTE}", "integer", "-99"),
+            (f"{_LN_REM}.19.{_LN_REMOTE}", "string", "ORBIT-1"),
+        ],
+    },
+    {
+        "id": "geRemoteRssi",
+        "group": "ge-ln",
+        "label": "Remote low RSSI",
+        "detail": "mIfLnStatusConnRemRssi −91 dBm, downstream −88",
+        "version": "2c",
+        "trap_oid": f"{_LN_REM}.6",
+        "varbinds": [
+            (f"{_LN_REM}.1.{_LN_REMOTE}", "string", "00:1A:8B:01:02:03"),
+            (f"{_LN_REM}.2.{_LN_REMOTE}", "string", "10.1.2.3"),
+            (f"{_LN_REM}.6.{_LN_REMOTE}", "integer", "-91"),
+            (f"{_LN_REM}.19.{_LN_REMOTE}", "string", "ORBIT-1"),
+            (f"{_LN_REM}.23.{_LN_REMOTE}", "integer", "-88"),
+        ],
+    },
 ]
 
 PRESET_BY_ID = {item["id"]: item for item in PRESETS}
@@ -193,6 +324,12 @@ def display_value(oid: str, syntax: str, value: str) -> str:
         return IF_OPER.get(value, value)
     if oid.startswith("1.3.6.1.2.1.2.2.1.7"):
         return IF_ADMIN.get(value, value)
+    if oid.startswith(f"{_LN_IF}.1.") or oid.startswith(f"{_LN_REM}.4."):
+        return LN_LINK.get(value, value)
+    if oid.startswith(f"{_LN_IF}.2."):
+        return LN_INIT.get(value, value)
+    if oid.startswith(f"{_LN_IF}.3."):
+        return LN_MODE.get(value, value)
     if syntax == "TimeTicks" and value.isdigit():
         ticks = int(value)
         seconds, hundredths = divmod(ticks, 100)

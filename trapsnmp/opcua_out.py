@@ -9,6 +9,9 @@ from datetime import datetime, timezone
 
 from asyncua import Client, Server, ua
 
+from trapsnmp.opc_users import USER_POLICY, PasswordUsers
+from trapsnmp.pki import PROFILES, Pki
+from trapsnmp.radios import OPC_TAGS, remote_opc_values
 from trapsnmp.trap_tags import startup_nodes
 
 log = logging.getLogger("trapsnmp.opcua")
@@ -23,7 +26,7 @@ _TAG_INITIAL = {"bool": False, "string": "", "int": 0, "uint": 0}
 
 NS_URI = "urn:trapsnmp:snmp"
 SLOT_COUNT = 8
-REMOTE_TAG_COUNT = 50
+REMOTE_TAG_COUNT = 999
 
 LATEST_FIELDS = (
     ("Source", ua.VariantType.String, ""),
@@ -49,6 +52,18 @@ def _iso(value) -> str:
     return "" if value is None else str(value)
 
 
+def _opc_text(value) -> tuple[str, str]:
+    if isinstance(value, bool):
+        return "Boolean", "true" if value else "false"
+    if isinstance(value, int):
+        return "Int32", str(value)
+    if isinstance(value, datetime):
+        return "DateTime", _iso(value)
+    if value is None:
+        return "Null", ""
+    return "String", str(value)
+
+
 class OpcuaBridge:
     def __init__(self) -> None:
         self.ready = False
@@ -56,6 +71,8 @@ class OpcuaBridge:
         self.endpoint = "opc.tcp://127.0.0.1:4840/trapsnmp/"
         self.namespace_index = 0
         self.event_count = 0
+        self.pki: Pki | None = None
+        self.users = PasswordUsers()
         self.nodes: dict = {}
         self.node_ids: dict[str, str] = {}
         self._server: Server | None = None
@@ -81,7 +98,7 @@ class OpcuaBridge:
         }
 
     async def start(self) -> None:
-        server = Server()
+        server = Server(user_manager=self.users)
         await server.init()
         await server.set_application_uri("urn:trapsnmp:gateway")
         server.product_uri = "urn:trapsnmp:snmp-opcua"
@@ -89,7 +106,18 @@ class OpcuaBridge:
         server.set_server_name("trapsnmp SNMP Gateway")
         server.set_endpoint(self.endpoint)
         server.socket_address = ("0.0.0.0", 4840)
-        server.set_security_policy([ua.SecurityPolicyType.NoSecurity])
+        try:
+            self.pki = await Pki.ensure()
+            await server.load_certificate(self.pki.cert_file, "der")
+            await server.load_private_key(self.pki.key_file)
+            server.set_security_policy(list(PROFILES))
+            server.set_identity_tokens([ua.AnonymousIdentityToken, ua.UserNameIdentityToken])
+            server.set_certificate_validator(self.pki.validator)
+        except Exception:
+            log.exception("OPC UA certificate setup failed; staying open")
+            self.pki = None
+            server.set_security_policy([ua.SecurityPolicyType.NoSecurity])
+            server.set_identity_tokens([ua.AnonymousIdentityToken, ua.UserNameIdentityToken])
         try:
             idx = await server.register_namespace(NS_URI)
             objects = server.nodes.objects
@@ -141,11 +169,14 @@ class OpcuaBridge:
             await add_var(radios, "Radios.Error", "Error", "", ua.VariantType.String)
             for number in range(1, REMOTE_TAG_COUNT + 1):
                 folder = await radios.add_object(ua.NodeId(f"Remote{number}", idx), f"Remote{number}")
-                await add_var(folder, f"Remote{number}.remote_mac", "remote_mac", "", ua.VariantType.String)
-                await add_var(folder, f"Remote{number}.remote_ip", "remote_ip", "", ua.VariantType.String)
-                await add_var(folder, f"Remote{number}.rssi", "rssi", 0, ua.VariantType.Int32)
-                await add_var(folder, f"Remote{number}.down", "down", 0, ua.VariantType.Int32)
-                await add_var(folder, f"Remote{number}.if_index", "if_index", 0, ua.VariantType.UInt32)
+                for name, kind in OPC_TAGS:
+                    await add_var(
+                        folder,
+                        f"Remote{number}.{name}",
+                        name,
+                        _TAG_INITIAL[kind],
+                        _TAG_TYPES[kind],
+                    )
             await self._install_tag_nodes()
 
             event_type = await server.create_custom_event_type(
@@ -313,6 +344,82 @@ class OpcuaBridge:
             "upstreamStatus": values["Upstream.Status"],
         }
 
+    async def browse(self, folder: str, query: str = "") -> dict:
+        if not self.ready:
+            return {
+                "ok": False,
+                "error": self.error or "OPC UA server is not running",
+                "folders": [],
+                "items": [],
+            }
+        folder = (folder or "Latest").strip() or "Latest"
+        query = query.strip().lower()
+        ns = self.namespace_index or 2
+        folders: list[str] = []
+        if folder == "trapsnmp":
+            folders = ["Latest", "Gateway", "Upstream", "Radios", "Tags"]
+            keys: list[str] = []
+        elif folder == "Radios":
+            folders = [f"Remote{number}" for number in range(1, REMOTE_TAG_COUNT + 1)]
+            keys = [key for key in self.nodes if key.startswith("Radios.")]
+        elif folder.startswith("Remote") and folder[6:].isdigit():
+            keys = [key for key in self.nodes if key.startswith(folder + ".")]
+        elif folder in ("Latest", "Gateway", "Upstream"):
+            keys = [key for key in self.nodes if key.startswith(folder + ".")]
+        elif folder == "Tags":
+            keys = [
+                key
+                for key in self.nodes
+                if not key.startswith(("Latest.", "Gateway.", "Upstream.", "Radios.", "Remote"))
+            ]
+        else:
+            return {"ok": False, "error": "Unknown folder.", "folders": [], "items": []}
+        if query:
+            keys = [key for key in keys if query in key.lower()]
+        keys.sort()
+        truncated = len(keys) > 300
+        items = []
+        for key in keys[:300]:
+            try:
+                raw = await self.nodes[key].read_value()
+            except Exception:
+                raw = None
+            kind, text = _opc_text(raw)
+            items.append(
+                {
+                    "name": key.split(".")[-1] if "." in key else key,
+                    "nodeId": f"ns={ns};s={key}",
+                    "value": text,
+                    "type": kind,
+                }
+            )
+        return {
+            "ok": True,
+            "folder": folder,
+            "endpoint": self.endpoint,
+            "namespace": NS_URI,
+            "namespaceIndex": ns,
+            "folders": folders,
+            "items": items,
+            "truncated": truncated,
+        }
+
+    def security_summary(self) -> dict:
+        summary = {
+            "policies": ["NoSecurity"],
+            "subject": "",
+            "expires": "",
+            "thumbprint": "",
+            "uri": "",
+            "trusted": [],
+            "rejected": [],
+        }
+        if self.pki is not None:
+            summary.update(self.pki.summary())
+        summary["users"] = self.users.names()
+        summary["userPolicy"] = USER_POLICY
+        return summary
+
     def configure_upstream(self, *, enabled: bool, endpoint: str, node_id: str) -> None:
         endpoint = endpoint.strip()
         node_id = node_id.strip()
@@ -430,6 +537,20 @@ class OpcuaBridge:
                 log.exception("tag write failed for %s", address)
         return written
 
+    async def write_rssi_wave(self, rows: list[dict]) -> None:
+        if not self.ready:
+            return
+        try:
+            await self._write("Radios.Count", min(len(rows), REMOTE_TAG_COUNT), ua.VariantType.UInt32)
+        except Exception:
+            log.exception("radio count write failed")
+        for number, row in enumerate(rows[:REMOTE_TAG_COUNT], start=1):
+            for name, value, kind in remote_opc_values(row):
+                try:
+                    await self._write(f"Remote{number}.{name}", value, _TAG_TYPES[kind])
+                except Exception:
+                    log.exception("rssi wave write failed for Remote%s.%s", number, name)
+
     async def publish_radios(self, snap: dict) -> int:
         if not self.ready:
             return 0
@@ -465,24 +586,9 @@ class OpcuaBridge:
         remotes = list(snap.get("remotes") or [])
         for number in range(1, REMOTE_TAG_COUNT + 1):
             remote = remotes[number - 1] if number <= len(remotes) else None
-            if remote is None:
-                mac, ip, rssi, down, if_index = "", "", 0, 0, 0
-            else:
-                mac = remote.get("mac") or ""
-                ip = "" if not remote.get("ip") or remote.get("ip") == "—" else remote["ip"]
-                rssi = 0 if remote.get("rssi") is None else int(remote["rssi"])
-                down = 0 if remote.get("downRssi") is None else int(remote["downRssi"])
-                if_index = int(remote.get("ifIndex") or 0)
-            fields = (
-                ("remote_mac", mac, ua.VariantType.String),
-                ("remote_ip", ip, ua.VariantType.String),
-                ("rssi", rssi, ua.VariantType.Int32),
-                ("down", down, ua.VariantType.Int32),
-                ("if_index", if_index, ua.VariantType.UInt32),
-            )
-            for name, value, variant in fields:
+            for name, value, kind in remote_opc_values(remote):
                 try:
-                    await self._write(f"Remote{number}.{name}", value, variant)
+                    await self._write(f"Remote{number}.{name}", value, _TAG_TYPES[kind])
                     written += 1
                 except Exception:
                     log.exception("remote tag write failed for Remote%s.%s", number, name)

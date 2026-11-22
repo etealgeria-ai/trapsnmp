@@ -1,4 +1,4 @@
-const state = { selected: null, sending: false, view: "monitor" };
+const state = { selected: null, sending: false, view: "monitor", opcFolder: "Latest", opcRadios: false };
 
 function esc(value) {
   return String(value ?? "")
@@ -81,6 +81,48 @@ function render(data) {
   document.getElementById("opc-ns").textContent = opc.namespace || "urn:trapsnmp:snmp";
   document.getElementById("opc-node").textContent = opc.nodes?.trapOid || "—";
   document.getElementById("opc-object").textContent = opc.nodes?.object || "—";
+  const cert = opc.certificate || {};
+  const subject = document.getElementById("cert-subject");
+  const thumb = document.getElementById("cert-thumb");
+  const expires = document.getElementById("cert-expires");
+  const policies = document.getElementById("cert-policies");
+  const rejected = document.getElementById("cert-rejected");
+  if (subject) subject.textContent = cert.subject || "—";
+  if (thumb) thumb.textContent = cert.thumbprint || "—";
+  if (expires) expires.textContent = cert.expires || "—";
+  if (policies) {
+    const sig = (cert.policies || []).join("|");
+    if (policies.dataset.sig !== sig) {
+      policies.dataset.sig = sig;
+      policies.innerHTML = (cert.policies || []).map((name) => `<span class="chip">${esc(name)}</span>`).join("");
+    }
+  }
+  const opcUsers = document.getElementById("opc-users");
+  if (opcUsers) {
+    const names = cert.users || [];
+    const sig = names.join("|");
+    if (opcUsers.dataset.sig !== sig) {
+      opcUsers.dataset.sig = sig;
+      opcUsers.innerHTML = names.map((name) => `
+        <span class="chip">${esc(name)} <button type="button" class="ghost" data-opc-user="${esc(name)}">Remove</button></span>
+      `).join("");
+    }
+  }
+  if (rejected) {
+    const rows = cert.rejected || [];
+    const sig = rows.map((item) => item.name).join("|");
+    if (rejected.dataset.sig !== sig) {
+      rejected.dataset.sig = sig;
+      rejected.innerHTML = rows.length
+        ? rows.map((item) => `
+            <div class="inline">
+              <span class="mono">${esc(item.subject || item.name)}</span>
+              <button type="button" class="ghost" data-trust="${esc(item.name)}">Trust</button>
+            </div>
+          `).join("")
+        : `<p class="empty">No rejected certificates.</p>`;
+    }
+  }
   document.getElementById("up-status").textContent = data.upstream?.enabled
     ? `${data.upstream.status} · ${data.upstream.forwarded} written`
     : (data.upstream?.status || "Not forwarding");
@@ -112,6 +154,18 @@ function render(data) {
   renderAgent(data.agent);
   renderTags(data.tags);
   renderRadios(data.radios);
+  if (state.view === "opc") refreshOpc();
+  const sine = data.sine || {};
+  const sineToggle = document.getElementById("sine-toggle");
+  const sineNote = document.getElementById("sine-note");
+  if (sineToggle) sineToggle.textContent = sine.enabled ? "Stop RSSI sine" : "Start RSSI sine";
+  if (sineNote) {
+    sineNote.textContent = sine.enabled && sine.rssi !== null && sine.rssi !== undefined
+      ? `Running. Shared RSSI ${sine.rssi} dBm. Remote1–Remote999 add a random ±${sine.spread} dBm.`
+      : sine.enabled
+        ? "Running."
+        : "Stopped.";
+  }
   const trace = document.getElementById("trace");
   const lines = data.trace || [];
   trace.innerHTML = lines.length
@@ -284,6 +338,7 @@ function showView(name) {
     button.classList.toggle("active", on);
     button.setAttribute("aria-selected", on ? "true" : "false");
   });
+  if (name === "opc") refreshOpc();
 }
 
 function renderUsers(users) {
@@ -314,7 +369,20 @@ function renderUsers(users) {
   }
 }
 
-document.getElementById("presets").addEventListener("click", async (event) => {
+document.getElementById("presets").addEventListener("click", onPreset);
+document.getElementById("ge-presets")?.addEventListener("click", onPreset);
+document.getElementById("sine-toggle")?.addEventListener("click", async () => {
+  const running = document.getElementById("sine-toggle")?.textContent.startsWith("Stop");
+  try {
+    await post("/api/sine", { enabled: !running });
+    setBench(running ? "RSSI sine stopped." : "RSSI sine started.");
+    await tick();
+  } catch (err) {
+    setBench(err.message, true);
+  }
+});
+
+async function onPreset(event) {
   const button = event.target.closest("[data-preset]");
   if (!button || state.sending) return;
   state.sending = true;
@@ -332,7 +400,7 @@ document.getElementById("presets").addEventListener("click", async (event) => {
     state.sending = false;
     button.disabled = false;
   }
-});
+}
 
 document.getElementById("feed").addEventListener("click", (event) => {
   const button = event.target.closest("[data-id]");
@@ -418,6 +486,43 @@ document.getElementById("use-inbox").addEventListener("click", () => {
   document.getElementById("up-node").value = data.opcua.nodes?.inbox || "";
 });
 
+document.getElementById("opc-user-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  try {
+    await post("/api/opc-user", { name: form.elements.name.value, password: form.elements.password });
+    form.reset();
+    await tick();
+  } catch (err) {
+    setBench(err.message, true);
+  }
+});
+
+document.getElementById("opc-users")?.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-opc-user]");
+  if (!button) return;
+  try {
+    await post("/api/opc-user", { action: "remove", name: button.dataset.opcUser });
+    await tick();
+  } catch (err) {
+    setBench(err.message, true);
+  }
+});
+
+document.getElementById("cert-rejected")?.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-trust]");
+  if (!button) return;
+  button.disabled = true;
+  try {
+    await post("/api/pki", { action: "trust", name: button.dataset.trust });
+    await tick();
+  } catch (err) {
+    setBench(err.message, true);
+  } finally {
+    button.disabled = false;
+  }
+});
+
 document.getElementById("forward-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
@@ -494,6 +599,112 @@ function rssiClass(value) {
   return "poor";
 }
 
+const RADIO_COLUMNS = [
+  ["oid", "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.6"],
+  ["remote_mac", "index mIfLnStatusConnRemAddress"],
+  ["remote_ip", "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.2"],
+  ["rssi", "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.6 mIfLnStatusConnRemRssi"],
+  ["down", "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.23 mIfLnStatusConnRemStatsDwnRssi"],
+  ["if_index", "ifIndex"],
+  ["link", "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.4 mIfLnStatusConnRemLinkStatus"],
+  ["ttl", "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.3"],
+  ["nicId", "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.5"],
+  ["evm", "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.7"],
+  ["mod", "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.8"],
+  ["name", "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.19"],
+  ["temp", "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.22"],
+  ["alarmed", "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.20"],
+  ["version", "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.21"],
+  ["gateway", "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.17"],
+  ["txPackets", "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.9"],
+  ["txBytes", "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.10"],
+  ["rxPackets", "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.11"],
+  ["rxBytes", "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.12"],
+  ["txError", "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.13"],
+  ["rxError", "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.14"],
+  ["txDrop", "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.15"],
+  ["rxDrop", "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.16"],
+  ["downEvm", "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.24"],
+  ["downMod", "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.25"],
+  ["allIp", "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.18"],
+];
+
+function opcTree() {
+  const host = document.getElementById("opc-tree");
+  if (!host) return;
+  const sig = `${state.opcFolder}|${state.opcRadios}`;
+  if (host.dataset.sig === sig) return;
+  host.dataset.sig = sig;
+  const current = state.opcFolder;
+  const button = (id, label, cls) =>
+    `<button type="button" class="${cls}${id === current ? " selected" : ""}" data-opc="${esc(id)}">${esc(label)}</button>`;
+  const remotes = state.opcRadios
+    ? Array.from({ length: 999 }, (_, index) => button(`Remote${index + 1}`, `Remote${index + 1}`, "remote")).join("")
+    : "";
+  host.innerHTML = [
+    button("trapsnmp", "trapsnmp", ""),
+    button("Latest", "Latest", "child"),
+    button("Gateway", "Gateway", "child"),
+    button("Upstream", "Upstream", "child"),
+    button("Radios", "Radios", "child"),
+    remotes,
+    button("Tags", "Tags", "child"),
+  ].join("");
+}
+
+async function refreshOpc() {
+  opcTree();
+  const body = document.getElementById("opc-rows");
+  if (!body) return;
+  const query = document.getElementById("opc-filter")?.value || "";
+  try {
+    const response = await fetch(`/api/opc?folder=${encodeURIComponent(state.opcFolder)}&q=${encodeURIComponent(query)}`);
+    const data = await response.json();
+    if (!data.ok) {
+      const html = `<tr><td colspan="4">${esc(data.error || "OPC UA is not ready.")}</td></tr>`;
+      if (body.dataset.html !== html) {
+        body.dataset.html = html;
+        body.innerHTML = html;
+      }
+      return;
+    }
+    const rows = data.items || [];
+    const html = rows.length
+      ? rows.map((item) => `
+          <tr>
+            <td>${esc(item.name)}</td>
+            <td class="oid">${esc(item.value)}</td>
+            <td>${esc(item.type)}</td>
+            <td class="oid">${esc(item.nodeId)}</td>
+          </tr>
+        `).join("") + (data.truncated ? `<tr><td colspan="4">Showing the first 300 tags. Use the filter to narrow them.</td></tr>` : "")
+      : `<tr><td colspan="4">No tags in ${esc(data.folder)}.</td></tr>`;
+    if (body.dataset.html !== html) {
+      body.dataset.html = html;
+      body.innerHTML = html;
+    }
+  } catch (_err) {
+    const html = `<tr><td colspan="4">Could not read the OPC UA server.</td></tr>`;
+    if (body.dataset.html !== html) {
+      body.dataset.html = html;
+      body.innerHTML = html;
+    }
+  }
+}
+
+document.getElementById("opc-tree")?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-opc]");
+  if (!button) return;
+  const folder = button.dataset.opc;
+  if (folder === "Radios") state.opcRadios = !state.opcRadios;
+  state.opcFolder = folder;
+  refreshOpc();
+});
+
+document.getElementById("opc-filter")?.addEventListener("input", () => {
+  if (state.view === "opc") refreshOpc();
+});
+
 function renderRadios(radios) {
   if (!radios) return;
   const status = document.getElementById("radio-status");
@@ -505,6 +716,10 @@ function renderRadios(radios) {
   }
   const note = document.getElementById("radio-note");
   if (note) note.textContent = radios.enabled ? `Polling every ${radios.interval}s` : "";
+  const head = document.getElementById("radio-head");
+  if (head && !head.childElementCount) {
+    head.innerHTML = `<th>Tag</th>${RADIO_COLUMNS.map(([label]) => `<th>${esc(label)}</th>`).join("")}`;
+  }
   const body = document.getElementById("radio-rows");
   if (body) {
     const slots = radios.slots || [];
@@ -513,14 +728,15 @@ function renderRadios(radios) {
       ? slots.map((row) => `
           <tr>
             <td class="oid">${esc(row.tag)}</td>
-            <td class="oid">${cell(row.remote_mac)}</td>
-            <td class="oid">${cell(row.remote_ip)}</td>
-            <td class="rssi ${rssiClass(row.rssi)}">${cell(row.rssi)}</td>
-            <td class="rssi ${rssiClass(row.down)}">${cell(row.down)}</td>
-            <td>${cell(row.if_index)}</td>
+            ${RADIO_COLUMNS.map(([key]) => {
+              const colored = key === "rssi" || key === "down" ? `rssi ${rssiClass(row[key])}` : "";
+              const mono = key === "oid" || key === "remote_mac" || key === "remote_ip" ? "oid" : "";
+              const value = key === "oid" && !row.remote_mac ? null : row[key];
+              return `<td class="${colored} ${mono}">${cell(value)}</td>`;
+            }).join("")}
           </tr>
         `).join("")
-      : '<tr><td colspan="6">Tags are not ready yet.</td></tr>';
+      : `<tr><td colspan="${RADIO_COLUMNS.length + 1}">Tags are not ready yet.</td></tr>`;
   }
   const form = document.getElementById("radio-form");
   if (form && !(document.activeElement && form.contains(document.activeElement))) {

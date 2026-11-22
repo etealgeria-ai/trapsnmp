@@ -17,7 +17,7 @@ python -m trapsnmp
 
 - Console: `http://127.0.0.1:8080/`
 - SNMP traps: UDP 162, or 1162 if 162 is unavailable
-- OPC UA: `opc.tcp://127.0.0.1:4840/trapsnmp/` (anonymous, security None)
+- OPC UA: `opc.tcp://127.0.0.1:4840/trapsnmp/`
 - Namespace: `urn:trapsnmp:snmp`
 
 The default SNMPv3 user is `trapsnmp`, authPriv, SHA passphrase `trapsnmp-auth`, AES passphrase `trapsnmp-priv`. Communities `public` and `private` are accepted. More communities and users can be added from the console.
@@ -26,4 +26,18 @@ Each trap is written under `Objects/trapsnmp` (`Latest.*`, recent slots, gateway
 
 The built-in SNMP agent answers Get, GetNext, GetBulk, and Set on UDP 1161, and can forward the latest trap to configured destinations.
 
-The Radios page polls a GE Orbit LN master and writes each connected radio into `Remote1` through `Remote50`. Every remote has `remote_mac`, `remote_ip`, `rssi`, `down`, and `if_index`. The master IP, community, port, and poll interval are set on the Config page and saved in `data/ge-master.json`.
+## GE Orbit radios
+
+The Radios page polls a GE Orbit LN master (`mIfLnStatusConnRemTable`) and writes each connected radio into `Remote1` through `Remote999`. Every remote has the short tags (`remote_mac`, `remote_ip`, `rssi`, `down`, `if_index`) plus one tag per column of `mIfLnStatusConnRemEntry` in MDS-IF-LN-MIB. The master IP, community, port, and poll interval are set on the Config page.
+
+The Send page can simulate those columns for Remote1 through Remote999 on one RSSI sine wave, with a random offset per remote.
+
+## OPC UA security
+
+The server still accepts an anonymous session on security None. It also offers Basic256Sha256, Aes128-SHA256-RSA-OAEP, and Aes256-SHA256-RSA-PSS, in Sign and SignAndEncrypt. The application certificate is created on first start under `data/pki/own/`. A client certificate that is not trusted is stored in `data/pki/rejected` and can be trusted from the Publish page.
+
+A username token is offered as well. On the open endpoint the password is encrypted with Basic256Sha256 and the server certificate. The first user is `trapsnmp` / `trapsnmp`.
+
+## Settings
+
+Communities, SNMPv3 users, the GE master, the agent, tag filters, upstream OPC UA, the sine switch, OPC UA users, and the last remote values are stored in `data/trapsnmp.ini` and loaded on the next start. The private key is not written into that file.

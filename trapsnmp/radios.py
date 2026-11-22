@@ -1,18 +1,17 @@
 """Poll a GE MDS Orbit LN master for connected remote radios.
 
-The master keeps one row per remote in mIfLnStatusConnRemTable
-(1.3.6.1.4.1.4130.10.2.5.1.2.2.1). The index is ifIndex plus the remote
-MAC. Column 2 is the remote IP and column 6 is RSSI.
+MDS-IF-LN-MIB defines mIfLnStatusConnRemEntry at
+1.3.6.1.4.1.4130.10.2.5.1.2.2.1 (mdsInterfaces.5.1.2.2.1).
+The index is ifIndex plus mIfLnStatusConnRemAddress. Column 6 is
+mIfLnStatusConnRemRssi and column 23 is mIfLnStatusConnRemStatsDwnRssi.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import re
 from datetime import datetime, timezone
-from pathlib import Path
 
 from pysnmp.hlapi.asyncio import (
     CommunityData,
@@ -30,7 +29,112 @@ log = logging.getLogger("trapsnmp.radios")
 ENTRY = "1.3.6.1.4.1.4130.10.2.5.1.2.2.1"
 _HOST = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.\-]{0,252}$")
 _MAX_REMOTES = 256
-CONFIG_PATH = Path("/workspace/data/ge-master.json")
+
+# Names and numbers are from MDS-IF-LN-MIB (May 16, 2018).
+LINK_STATUS = {
+    0: "initializing",
+    1: "scanning",
+    2: "negotiating",
+    3: "authenticating",
+    4: "associated",
+    5: "disassociated",
+}
+MODULATION = {
+    0: "unknown",
+    4: "qpsk",
+    16: "qam16",
+    32: "qam32",
+    64: "qam64",
+    65: "fsk9600",
+    66: "fsk9600m",
+    67: "fsk19200",
+    68: "fsk19200m",
+    69: "fsk3200",
+    70: "fsk19200e",
+    71: "fsk19200n",
+    72: "fsk38400n",
+    73: "fsk38400e",
+}
+
+# column, row key, OPC UA tag, decoder
+CONN_REM_COLUMNS = (
+    ("1", "address", "mIfLnStatusConnRemAddress", "mac"),
+    ("2", "ip", "mIfLnStatusConnRemIpAddress", "ip"),
+    ("3", "ttl", "mIfLnStatusConnRemTimeToLive", "uint"),
+    ("4", "link", "mIfLnStatusConnRemLinkStatus", "link"),
+    ("5", "nicId", "mIfLnStatusConnRemNicId", "uint"),
+    ("6", "rssi", "mIfLnStatusConnRemRssi", "int"),
+    ("7", "evm", "mIfLnStatusConnRemEvm", "uint"),
+    ("8", "mod", "mIfLnStatusConnRemMod", "mod"),
+    ("9", "txPackets", "mIfLnStatusConnRemStatsTxPackets", "uint"),
+    ("10", "txBytes", "mIfLnStatusConnRemStatsTxBytes", "uint"),
+    ("11", "rxPackets", "mIfLnStatusConnRemStatsRxPackets", "uint"),
+    ("12", "rxBytes", "mIfLnStatusConnRemStatsRxBytes", "uint"),
+    ("13", "txError", "mIfLnStatusConnRemStatsTxError", "uint"),
+    ("14", "rxError", "mIfLnStatusConnRemStatsRxError", "uint"),
+    ("15", "txDrop", "mIfLnStatusConnRemStatsTxDrop", "uint"),
+    ("16", "rxDrop", "mIfLnStatusConnRemStatsRxDrop", "uint"),
+    ("17", "gateway", "mIfLnStatusConnRemStatsGateway", "mac"),
+    ("18", "allIp", "mIfLnStatusConnRemStatsAllIp", "text"),
+    ("19", "name", "mIfLnStatusConnRemStatsName", "text"),
+    ("20", "alarmed", "mIfLnStatusConnRemStatsAlarmed", "bool"),
+    ("21", "version", "mIfLnStatusConnRemStatsVersion", "text"),
+    ("22", "temp", "mIfLnStatusConnRemStatsTemp", "int"),
+    ("23", "downRssi", "mIfLnStatusConnRemStatsDwnRssi", "int"),
+    ("24", "downEvm", "mIfLnStatusConnRemStatsDwnEvm", "uint"),
+    ("25", "downMod", "mIfLnStatusConnRemStatsDwnMod", "mod"),
+)
+
+_OPC_KIND = {
+    "mac": "string",
+    "ip": "string",
+    "text": "string",
+    "link": "string",
+    "mod": "string",
+    "int": "int",
+    "uint": "uint",
+    "bool": "bool",
+}
+
+# Short names the console already shows, then one tag per MIB column.
+OPC_TAGS = (
+    ("remote_mac", "string"),
+    ("remote_ip", "string"),
+    ("rssi", "int"),
+    ("down", "int"),
+    ("if_index", "uint"),
+    ("oid", "string"),
+) + tuple((name, _OPC_KIND[kind]) for _column, _key, name, kind in CONN_REM_COLUMNS)
+
+SLOT_KEYS = (
+    "oid",
+    "remote_mac",
+    "remote_ip",
+    "rssi",
+    "down",
+    "if_index",
+    "link",
+    "ttl",
+    "nicId",
+    "evm",
+    "mod",
+    "name",
+    "temp",
+    "alarmed",
+    "version",
+    "gateway",
+    "txPackets",
+    "txBytes",
+    "rxPackets",
+    "rxBytes",
+    "txError",
+    "rxError",
+    "txDrop",
+    "rxDrop",
+    "downEvm",
+    "downMod",
+    "allIp",
+)
 
 
 def parse_index(suffix: str) -> tuple[int, str] | None:
@@ -54,6 +158,10 @@ def split_instance(oid: str) -> tuple[str, str] | None:
 
 
 def _as_int(value) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return int(value)
     text = str(value).strip()
     if text.startswith("-") or text.isdigit():
         try:
@@ -73,18 +181,102 @@ def _as_text(value) -> str:
     return text
 
 
+def _as_mac(value) -> str:
+    if isinstance(value, str):
+        text = value.strip().replace("-", ":")
+        parts = text.split(":")
+        if len(parts) == 6 and all(re.fullmatch(r"[0-9A-Fa-f]{1,2}", part) for part in parts):
+            return ":".join(f"{int(part, 16):02X}" for part in parts)
+        compact = text.lower().removeprefix("0x").replace(" ", "")
+        if re.fullmatch(r"[0-9a-f]{12}", compact):
+            return ":".join(compact[index : index + 2] for index in range(0, 12, 2)).upper()
+        return ""
+    try:
+        raw = bytes(value)
+    except (TypeError, ValueError):
+        return ""
+    if len(raw) == 6:
+        return ":".join(f"{byte:02X}" for byte in raw)
+    return ""
+
+
 def _as_ip(value) -> str:
     text = str(value).strip()
     if re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", text):
         return text
-    raw = bytes(value) if not isinstance(value, str) else b""
+    try:
+        raw = bytes(value) if not isinstance(value, str) else b""
+    except (TypeError, ValueError):
+        raw = b""
     if len(raw) == 4:
         return ".".join(str(byte) for byte in raw)
-    return text or "—"
+    if len(raw) == 16:
+        return ":".join(f"{raw[index]:02x}{raw[index + 1]:02x}" for index in range(0, 16, 2))
+    return text or ""
+
+
+def _as_enum(value, names: dict[int, str]) -> str:
+    number = _as_int(value)
+    if number is None:
+        text = _as_text(value)
+        return text
+    return names.get(number, str(number))
+
+
+def _as_bool(value) -> bool | None:
+    number = _as_int(value)
+    if number == 1:
+        return True
+    if number == 2 or number == 0:
+        return False
+    text = str(value).strip().lower()
+    if text in ("true", "1"):
+        return True
+    if text in ("false", "2", "0"):
+        return False
+    return None
+
+
+def _decode(kind: str, value):
+    if kind == "mac":
+        return _as_mac(value) or None
+    if kind == "ip":
+        return _as_ip(value) or None
+    if kind == "int":
+        return _as_int(value)
+    if kind == "uint":
+        number = _as_int(value)
+        if number is None or number < 0:
+            return None
+        return number
+    if kind == "text":
+        return _as_text(value) or None
+    if kind == "link":
+        return _as_enum(value, LINK_STATUS) or None
+    if kind == "mod":
+        return _as_enum(value, MODULATION) or None
+    if kind == "bool":
+        return _as_bool(value)
+    return None
+
+
+def _blank_row(if_index: int, mac: str, index: str) -> dict:
+    row = {key: None for _column, key, _name, _kind in CONN_REM_COLUMNS}
+    row.update(
+        {
+            "ifIndex": if_index,
+            "mac": mac,
+            "key": mac.replace(":", ""),
+            "address": mac,
+            "oid": f"{ENTRY}.6.{index}",
+        }
+    )
+    return row
 
 
 def rows_from_binds(binds: list[tuple[str, object]]) -> list[dict]:
     grouped: dict[str, dict] = {}
+    by_column = {column: (key, kind) for column, key, _name, kind in CONN_REM_COLUMNS}
     for oid, value in binds:
         split = split_instance(oid)
         if split is None:
@@ -94,36 +286,62 @@ def rows_from_binds(binds: list[tuple[str, object]]) -> list[dict]:
         if parsed is None:
             continue
         if_index, mac = parsed
-        row = grouped.setdefault(
-            index,
-            {
-                "ifIndex": if_index,
-                "mac": mac,
-                "key": mac.replace(":", ""),
-                "ip": "—",
-                "rssi": None,
-                "downRssi": None,
-                "evm": None,
-                "name": "",
-                "link": "",
-            },
-        )
-        if column == "2":
-            row["ip"] = _as_ip(value)
-        elif column == "4":
-            number = _as_int(value)
-            row["link"] = "" if number is None else str(number)
-        elif column == "6":
-            row["rssi"] = _as_int(value)
-        elif column == "7":
-            row["evm"] = _as_int(value)
-        elif column == "19":
-            row["name"] = _as_text(value)
-        elif column == "23":
-            row["downRssi"] = _as_int(value)
+        row = grouped.setdefault(index, _blank_row(if_index, mac, index))
+        spec = by_column.get(column)
+        if spec is None:
+            continue
+        key, kind = spec
+        row[key] = _decode(kind, value)
     rows = list(grouped.values())
     rows.sort(key=lambda item: (item["ifIndex"], item["mac"]))
     return rows[:_MAX_REMOTES]
+
+
+def _blank_opc(kind: str):
+    if kind == "bool":
+        return False
+    if kind in ("int", "uint"):
+        return 0
+    return ""
+
+
+def _opc_value(value, kind: str):
+    if value is None or value == "" or value == "—":
+        return _blank_opc(kind)
+    if kind == "bool":
+        return bool(value)
+    if kind in ("int", "uint"):
+        return int(value)
+    return str(value)
+
+
+def remote_opc_values(row: dict | None) -> list[tuple[str, object, str]]:
+    if row is None:
+        return [(name, _blank_opc(kind), kind) for name, kind in OPC_TAGS]
+    ip = row.get("ip")
+    source = {
+        "remote_mac": row.get("mac") or "",
+        "remote_ip": "" if ip in (None, "—") else ip,
+        "rssi": row.get("rssi"),
+        "down": row.get("downRssi"),
+        "if_index": row.get("ifIndex") or 0,
+        "oid": row.get("oid") or "",
+    }
+    for _column, key, name, _kind in CONN_REM_COLUMNS:
+        source[name] = row.get(key)
+    return [(name, _opc_value(source.get(name), kind), kind) for name, kind in OPC_TAGS]
+
+
+def slot_fields(row: dict | None) -> dict:
+    if row is None:
+        return {key: None for key in SLOT_KEYS}
+    ip = row.get("ip")
+    values = {key: row.get(key) for key in SLOT_KEYS}
+    values["remote_mac"] = row.get("mac") or None
+    values["remote_ip"] = None if ip in (None, "", "—") else ip
+    values["down"] = row.get("downRssi")
+    values["if_index"] = row.get("ifIndex")
+    return values
 
 
 class OrbitMaster:
@@ -138,48 +356,13 @@ class OrbitMaster:
         self.updated_at = ""
         self.polling = False
         self._on_update = on_update
+        self.on_save = None
         self._task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
-        self._load()
-
-    def _load(self) -> None:
-        try:
-            saved = json.loads(CONFIG_PATH.read_text())
-        except (OSError, json.JSONDecodeError):
-            return
-        if not isinstance(saved, dict):
-            return
-        host = str(saved.get("host") or "").strip()
-        community = str(saved.get("community") or "").strip()
-        if _HOST.fullmatch(host):
-            self.host = host
-        if community and len(community) <= 256:
-            self.community = community
-        try:
-            port = int(saved.get("port") or self.port)
-            interval = int(saved.get("interval") or self.interval)
-        except (TypeError, ValueError):
-            return
-        if 1 <= port <= 65535:
-            self.port = port
-        if 5 <= interval <= 300:
-            self.interval = interval
-        self.enabled = bool(saved.get("enabled"))
 
     def _save(self) -> None:
-        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        CONFIG_PATH.write_text(
-            json.dumps(
-                {
-                    "host": self.host,
-                    "community": self.community,
-                    "port": self.port,
-                    "interval": self.interval,
-                    "enabled": self.enabled,
-                },
-                indent=2,
-            )
-        )
+        if self.on_save:
+            self.on_save()
 
     def snapshot(self) -> dict:
         return {

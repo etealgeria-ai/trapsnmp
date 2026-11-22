@@ -17,9 +17,9 @@ STATIC = Path(__file__).resolve().parent / "static"
 INDEX = (STATIC / "index.html").read_text(encoding="utf-8")
 
 
-def _preset_buttons() -> str:
+def _preset_buttons(items) -> str:
     parts = []
-    for item in PRESETS:
+    for item in items:
         parts.append(
             "<button type=\"button\" class=\"preset\" data-preset=\"{id}\">"
             "<span class=\"preset-name\">{label}</span>"
@@ -37,7 +37,13 @@ def _esc(value: str) -> str:
     return escape(value, quote=True)
 
 
-PAGE = INDEX.replace("<!--PRESETS-->", _preset_buttons())
+PAGE = INDEX.replace(
+    "<!--PRESETS-->",
+    _preset_buttons([item for item in PRESETS if item.get("group") != "ge-ln"]),
+).replace(
+    "<!--GE-PRESETS-->",
+    _preset_buttons([item for item in PRESETS if item.get("group") == "ge-ln"]),
+)
 
 
 def _json_error(message: str, status: int = 400) -> web.Response:
@@ -50,6 +56,49 @@ async def handle_index(_request: web.Request) -> web.Response:
         content_type="text/html",
         headers={"Cache-Control": "no-store"},
     )
+
+
+async def handle_opc_user(request: web.Request) -> web.Response:
+    service: Service = request.app["service"]
+    try:
+        body = await request.json()
+    except Exception:
+        return _json_error("Expected JSON.")
+    if not isinstance(body, dict):
+        return _json_error("Expected a JSON object.")
+    try:
+        if body.get("action") == "remove":
+            service.opc.users.remove(str(body.get("name") or ""))
+        else:
+            service.opc.users.add(str(body.get("name") or ""), str(body.get("password") or ""))
+    except ValueError as exc:
+        return _json_error(str(exc))
+    service.persist()
+    return web.json_response({"ok": True, "users": service.opc.users.names()})
+
+
+async def handle_pki(request: web.Request) -> web.Response:
+    service: Service = request.app["service"]
+    if service.opc.pki is None:
+        return _json_error("The certificate store is not ready.", 503)
+    try:
+        body = await request.json()
+    except Exception:
+        return _json_error("Expected JSON.")
+    if not isinstance(body, dict) or body.get("action") != "trust":
+        return _json_error("Expected a trust action.")
+    try:
+        summary = service.opc.pki.trust(str(body.get("name") or ""))
+    except ValueError as exc:
+        return _json_error(str(exc))
+    return web.json_response({"ok": True, "certificate": summary})
+
+
+async def handle_opc(request: web.Request) -> web.Response:
+    service: Service = request.app["service"]
+    folder = request.query.get("folder", "Latest")
+    query = request.query.get("q", "")
+    return web.json_response(await service.opc.browse(folder, query))
 
 
 async def handle_favicon(_request: web.Request) -> web.Response:
@@ -110,6 +159,7 @@ async def handle_community(request: web.Request) -> web.Response:
         return _json_error(str(exc))
     except Exception:
         return _json_error("Expected JSON.", 400)
+    service.persist()
     return web.json_response({"ok": True, "communities": service.snmp.communities})
 
 
@@ -122,6 +172,7 @@ async def handle_user(request: web.Request) -> web.Response:
         return _json_error(str(exc))
     except Exception:
         return _json_error("Expected JSON.", 400)
+    service.persist()
     return web.json_response({"ok": True, "user": created, "users": service.snmp.users})
 
 
@@ -167,6 +218,7 @@ async def handle_agent(request: web.Request) -> web.Response:
     except Exception as exc:
         log.exception("agent update failed")
         return _json_error(str(exc), 500)
+    service.persist()
     return web.json_response({"ok": True, "agent": service.agent.snapshot()})
 
 
@@ -213,7 +265,19 @@ async def handle_tags(request: web.Request) -> web.Response:
         )
     except (TypeError, ValueError) as exc:
         return _json_error(str(exc))
+    service.persist()
     return web.json_response({"ok": True, "tags": service.tags.snapshot()})
+
+
+async def handle_sine(request: web.Request) -> web.Response:
+    service: Service = request.app["service"]
+    try:
+        body = await request.json()
+    except Exception:
+        return _json_error("Expected JSON.")
+    if not isinstance(body, dict):
+        return _json_error("Expected a JSON object.")
+    return web.json_response({"ok": True, "sine": service.set_sine(bool(body.get("enabled")))})
 
 
 async def handle_upstream(request: web.Request) -> web.Response:
@@ -229,6 +293,7 @@ async def handle_upstream(request: web.Request) -> web.Response:
         return _json_error(str(exc))
     except Exception:
         return _json_error("Expected JSON.", 400)
+    service.persist()
     return web.json_response({"ok": True, "upstream": service.opc.upstream})
 
 
@@ -245,6 +310,9 @@ async def serve(service: Service) -> None:
     app.router.add_get("/", handle_index)
     app.router.add_get("/favicon.svg", handle_favicon)
     app.router.add_get("/api/state", handle_state)
+    app.router.add_get("/api/opc", handle_opc)
+    app.router.add_post("/api/pki", handle_pki)
+    app.router.add_post("/api/opc-user", handle_opc_user)
     app.router.add_post("/api/inject", handle_inject)
     app.router.add_post("/api/community", handle_community)
     app.router.add_post("/api/user", handle_user)
@@ -252,6 +320,7 @@ async def serve(service: Service) -> None:
     app.router.add_post("/api/agent", handle_agent)
     app.router.add_post("/api/tags", handle_tags)
     app.router.add_post("/api/radios", handle_radios)
+    app.router.add_post("/api/sine", handle_sine)
     app.router.add_post("/api/upstream", handle_upstream)
     app.router.add_static("/static", STATIC, show_index=False)
     runner = web.AppRunner(app)

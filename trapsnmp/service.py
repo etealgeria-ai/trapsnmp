@@ -5,23 +5,69 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
+import random
 import re
+import time
 from collections import deque
 from datetime import datetime, timezone
 
 from trapsnmp import __version__
 from trapsnmp.agent import SnmpAgent
 from trapsnmp.catalog import OID_RE, PRESETS, classify_trap, display_value, oid_name
-from trapsnmp.radios import OrbitMaster
+from trapsnmp.radios import CONN_REM_COLUMNS, ENTRY, LINK_STATUS, MODULATION, OrbitMaster, slot_fields
 from trapsnmp.trap_tags import TrapTags
 from trapsnmp.opcua_out import NS_URI, REMOTE_TAG_COUNT, OpcuaBridge
+from trapsnmp.settings import INI_PATH, load as load_settings
+from trapsnmp.settings import save as save_settings
 from trapsnmp.snmp_in import SnmpTrapIn
 
 log = logging.getLogger("trapsnmp")
 
+
+def _remote_varbinds(row: dict) -> list[tuple[str, str, str]]:
+    index = row["index"]
+    binds = []
+    for column, key, _name, kind in CONN_REM_COLUMNS:
+        value = row.get(key)
+        if kind == "link":
+            kind_name, text = "integer", str(_LINK_NUM.get(value, 4))
+        elif kind == "mod":
+            kind_name, text = "integer", str(_MOD_NUM.get(value, 0))
+        elif kind == "bool":
+            kind_name, text = "integer", "1" if value else "2"
+        elif kind in ("int", "uint"):
+            kind_name, text = "integer", "0" if value is None else str(int(value))
+        else:
+            kind_name, text = "string", "" if value is None else str(value)
+        binds.append((f"{_REM}.{column}.{index}", kind_name, text))
+    return binds
+
 _OID = re.compile(OID_RE)
-_MAX_BINDS = 24
+_MAX_BINDS = 32
 _MAX_VALUE = 512
+_SINE_CENTER = -75
+_SINE_AMPLITUDE = 15
+_SINE_PERIOD = 30.0
+_SINE_EVERY = 2.0
+_SINE_SPREAD = 8
+_LINK_NUM = {name: number for number, name in LINK_STATUS.items()}
+_MOD_NUM = {name: number for number, name in MODULATION.items()}
+_MOD_NAMES = ("qpsk", "qam16", "qam64", "fsk9600")
+_COUNTERS = (
+    "txPackets",
+    "txBytes",
+    "rxPackets",
+    "rxBytes",
+    "txError",
+    "rxError",
+    "txDrop",
+    "rxDrop",
+)
+_SINE_INDEX = "1.0.26.139.1.2.3"
+_SINE_MAC = "00:1A:8B:01:02:03"
+_SINE_IP = "10.1.2.3"
+_REM = "1.3.6.1.4.1.4130.10.2.5.1.2.2.1"
 
 
 class Service:
@@ -40,8 +86,20 @@ class Service:
         self._inject_lock = asyncio.Lock()
         self._pending: asyncio.Future | None = None
         self._expect = ""
+        self._sine_on = False
+        self._sine_task: asyncio.Task | None = None
+        self._sine_t0 = 0.0
+        self._sine_rssi: int | None = None
+        self._sine_down: int | None = None
+        self._sine_stats: dict[int, dict[str, int]] = {}
+        self._loading = False
         self._started = False
         self.started_at = datetime.now(timezone.utc)
+        load_settings(self)
+        self.radios.on_save = self.persist
+
+    def persist(self) -> None:
+        save_settings(self)
 
     async def start(self) -> None:
         if self._started:
@@ -67,6 +125,12 @@ class Service:
             self._trace(f"OPC UA server ready at {self.opc.endpoint}")
         elif self.opc.error:
             self._trace(f"OPC UA server failed: {self.opc.error}")
+        if self.radios.remotes and self.opc.ready:
+            await self.opc.write_rssi_wave(self.radios.remotes)
+        if INI_PATH.exists():
+            self._trace(f"Loaded settings from {INI_PATH}")
+        if self._sine_on:
+            self.set_sine(True)
         if self.agent.listening:
             self._trace(
                 f"SNMP agent on UDP {self.agent.port} at {self.agent.object_id()}"
@@ -85,20 +149,109 @@ class Service:
             node = f"ns={index};s=Remote{slot}" if index else f"Remote{slot}"
             if row is not None:
                 row["rssiNode"] = f"{node}.rssi"
-            ip = "" if not row or row.get("ip") in (None, "", "—") else row["ip"]
-            slots.append(
-                {
-                    "tag": f"Remote{slot}",
-                    "node": node,
-                    "remote_mac": row["mac"] if row else "",
-                    "remote_ip": ip,
-                    "rssi": None if row is None else row.get("rssi"),
-                    "down": None if row is None else row.get("downRssi"),
-                    "if_index": None if row is None else row.get("ifIndex"),
-                }
-            )
+            slots.append({"tag": f"Remote{slot}", "node": node, **slot_fields(row)})
         snap["slots"] = slots
         return snap
+
+    def sine_view(self) -> dict:
+        return {
+            "enabled": self._sine_on,
+            "rssi": self._sine_rssi,
+            "down": self._sine_down,
+            "center": _SINE_CENTER,
+            "amplitude": _SINE_AMPLITUDE,
+            "period": int(_SINE_PERIOD),
+            "spread": _SINE_SPREAD,
+        }
+
+    def set_sine(self, enabled: bool) -> dict:
+        enabled = bool(enabled)
+        if enabled:
+            self._sine_on = True
+            if self._sine_t0 == 0.0:
+                self._sine_t0 = time.monotonic()
+            if self._sine_task is None or self._sine_task.done():
+                self._sine_task = asyncio.create_task(self._sine_loop())
+        else:
+            self._sine_on = False
+            if self._sine_task is not None:
+                self._sine_task.cancel()
+                self._sine_task = None
+        self.persist()
+        return self.sine_view()
+
+    async def _sine_loop(self) -> None:
+        try:
+            while self._sine_on:
+                await self._sine_once()
+                await asyncio.sleep(_SINE_EVERY)
+        except asyncio.CancelledError:
+            return
+
+    async def _sine_once(self) -> None:
+        elapsed = time.monotonic() - self._sine_t0
+        angle = 2 * math.pi * (elapsed / _SINE_PERIOD)
+        rssi = int(round(_SINE_CENTER + _SINE_AMPLITUDE * math.sin(angle)))
+        down = int(round(_SINE_CENTER - 6 + _SINE_AMPLITUDE * math.sin(angle - 0.8)))
+        self._sine_rssi = rssi
+        self._sine_down = down
+        rows = []
+        for number in range(1, REMOTE_TAG_COUNT + 1):
+            mac = f"00:1A:8B:00:{(number >> 8) & 0xFF:02X}:{number & 0xFF:02X}"
+            index = "1." + ".".join(str(int(part, 16)) for part in mac.split(":"))
+            ip = f"10.1.{(number - 1) // 254 + 2}.{(number - 1) % 254 + 1}"
+            stats = self._sine_stats.setdefault(
+                number,
+                {key: random.randint(0, 500) for key in _COUNTERS},
+            )
+            for key in _COUNTERS:
+                step = random.randint(0, 40 if key.endswith("Bytes") else 8)
+                stats[key] = (stats[key] + step) % 1_000_000
+            link = "associated" if random.random() > 0.08 else random.choice(("scanning", "negotiating", "disassociated"))
+            rows.append(
+                {
+                    "ifIndex": 1,
+                    "mac": mac,
+                    "key": mac.replace(":", ""),
+                    "index": index,
+                    "ip": ip,
+                    "address": mac,
+                    "name": f"ORBIT-{number}",
+                    "version": "4.6.1",
+                    "allIp": ip,
+                    "gateway": "00:1A:8B:FF:00:01",
+                    "link": link,
+                    "ttl": random.randint(30, 300),
+                    "nicId": 1000 + number,
+                    "rssi": max(-110, min(-40, rssi + random.randint(-_SINE_SPREAD, _SINE_SPREAD))),
+                    "downRssi": max(-110, min(-40, down + random.randint(-_SINE_SPREAD, _SINE_SPREAD))),
+                    "evm": random.randint(4, 35),
+                    "downEvm": random.randint(4, 35),
+                    "mod": random.choice(_MOD_NAMES),
+                    "downMod": random.choice(_MOD_NAMES),
+                    "temp": int(round(38 + 6 * math.sin(angle + number / 8) + random.randint(-2, 2))),
+                    "alarmed": random.random() < 0.08,
+                    "oid": f"{ENTRY}.6.{index}",
+                    **stats,
+                }
+            )
+        for row in rows:
+            try:
+                await self.snmp.send(
+                    community="public",
+                    version="2c",
+                    trap_oid=f"{_REM}.6",
+                    varbinds=_remote_varbinds(row),
+                )
+            except Exception as exc:
+                self._trace(f"RSSI sine trap failed for {row['name']}: {exc}")
+                break
+        self.radios.remotes = rows
+        self.radios.error = None
+        self.radios.updated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        if self.opc.ready:
+            await self.opc.write_rssi_wave(rows)
+        self.persist()
 
     async def _on_radios(self, snap: dict) -> None:
         note = snap.get("error") or f"{snap['host']}: {snap['count']} remote" + ("" if snap["count"] == 1 else "s")
@@ -107,6 +260,7 @@ class Service:
             self._trace("Radio poll failed: " + snap["error"] if snap.get("error") else "Radio poll " + note)
         if self.opc.ready:
             await self.opc.publish_radios(snap)
+        self.persist()
 
     async def snapshot(self) -> dict:
         readback = await self.opc.readback()
@@ -124,8 +278,9 @@ class Service:
                 "endpoint": self.opc.endpoint,
                 "namespace": NS_URI,
                 "namespaceIndex": self.opc.namespace_index,
-                "security": "None",
+                "security": "None and current secure profiles",
                 "identity": "anonymous",
+                "certificate": self.opc.security_summary(),
                 "eventType": "SnmpTrapEvent",
                 "eventCount": self.opc.event_count,
                 "error": self.opc.error,
@@ -156,6 +311,7 @@ class Service:
             "agent": self.agent.snapshot(),
             "tags": self.tags.snapshot(),
             "radios": self.radio_view(),
+            "sine": self.sine_view(),
         }
 
     async def diagnose(self) -> dict:

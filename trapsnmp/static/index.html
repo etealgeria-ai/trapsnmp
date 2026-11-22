@@ -37,6 +37,7 @@
       <button type="button" class="nav-btn" data-view="agent" aria-selected="false">Agent</button>
       <button type="button" class="nav-btn" data-view="config" aria-selected="false">Config</button>
       <button type="button" class="nav-btn" data-view="radios" aria-selected="false">Radios</button>
+      <button type="button" class="nav-btn" data-view="opc" aria-selected="false">OPC</button>
       <button type="button" class="nav-btn" data-view="publish" aria-selected="false">Publish</button>
       <button type="button" class="nav-btn" data-view="diag" aria-selected="false">Diag</button>
     </nav>
@@ -167,6 +168,15 @@
         </div>
         <p class="hint" id="snmp-note">The bench sends a real UDP trap into the same receiver agents use.</p>
         <div class="presets" id="presets"><!--PRESETS--></div>
+        <h3 class="subhead">GE MDS LN</h3>
+        <p class="hint">Simulated from MDS-IF-LN-MIB. The trap OID is the status object that changed, and the varbinds are the columns from that file.</p>
+        <div class="presets" id="ge-presets"><!--GE-PRESETS--></div>
+        <h3 class="subhead">RSSI sine</h3>
+        <p class="hint">One timer for Remote1 through Remote999. Every connected-remote column is sent in each trap. RSSI is the shared sine, −75 ± 15 dBm, plus a random ±8 dBm. The other items get their own random values.</p>
+        <div class="actions">
+          <button type="button" class="primary" id="sine-toggle">Start RSSI sine</button>
+        </div>
+        <p class="note" id="sine-note">Stopped.</p>
         <p class="note" id="bench-note" role="status"></p>
         <h3 class="subhead">Custom trap</h3>
         <form id="custom-form">
@@ -410,7 +420,7 @@
           <p class="index">01</p>
           <h2>GE master station</h2>
         </div>
-        <p class="hint">The LN master the Orbit radios connect to. RSSI is read from this address.</p>
+        <p class="hint">The LN master the Orbit radios connect to. RSSI is read from this address. Every setting and the last remote entries are kept in data/trapsnmp.ini and loaded on the next start.</p>
         <form id="radio-form">
           <label class="field">
             <span>IP address</span>
@@ -447,21 +457,45 @@
           <p class="index">01</p>
           <h2>Remotes</h2>
         </div>
-        <p class="hint" id="radio-status">Live values for Remote1 through Remote50. The page refreshes every second.</p>
+        <p class="hint" id="radio-status">Live values for Remote1 through Remote999, one tag per column of mIfLnStatusConnRemEntry. The page refreshes every second.</p>
         <div class="table-wrap">
           <table>
             <thead>
-              <tr>
-                <th>Tag</th>
-                <th>remote_mac</th>
-                <th>remote_ip</th>
-                <th>rssi</th>
-                <th>down</th>
-                <th>if_index</th>
-              </tr>
+              <tr id="radio-head"></tr>
             </thead>
             <tbody id="radio-rows"></tbody>
           </table>
+        </div>
+      </section>
+    </div>
+
+    <div class="view" data-view-panel="opc" hidden>
+      <section class="panel">
+        <div class="panel-head">
+          <p class="index">01</p>
+          <h2>OPC UA</h2>
+        </div>
+        <div class="opc-window">
+          <div class="opc-tree" id="opc-tree"></div>
+          <div class="opc-main">
+            <label class="field opc-filter">
+              <span>Filter</span>
+              <input id="opc-filter" spellcheck="false" placeholder="rssi, Remote1, EVENTS" />
+            </label>
+            <div class="table-wrap opc-items">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Value</th>
+                    <th>Type</th>
+                    <th>Node id</th>
+                  </tr>
+                </thead>
+                <tbody id="opc-rows"></tbody>
+              </table>
+            </div>
+          </div>
         </div>
       </section>
     </div>
@@ -472,7 +506,7 @@
           <p class="index">01</p>
           <h2>OPC UA</h2>
         </div>
-        <p class="hint">Anonymous session, security None. Read <span class="mono">Latest</span> or subscribe to events on the trapsnmp object.</p>
+        <p class="hint">Anonymous still works. A username uses policy Basic256Sha256: on the open endpoint the password is encrypted with the server certificate.</p>
         <dl class="facts" id="opc-facts">
           <div>
             <dt>Endpoint</dt>
@@ -490,7 +524,40 @@
             <dt>Event source</dt>
             <dd class="mono" id="opc-object">—</dd>
           </div>
+          <div>
+            <dt>Certificate</dt>
+            <dd class="mono" id="cert-subject">—</dd>
+          </div>
+          <div>
+            <dt>Thumbprint</dt>
+            <dd class="mono" id="cert-thumb">—</dd>
+          </div>
+          <div>
+            <dt>Expires</dt>
+            <dd class="mono" id="cert-expires">—</dd>
+          </div>
         </dl>
+        <h3 class="subhead">Security profiles</h3>
+        <div class="chips" id="cert-policies"></div>
+        <h3 class="subhead">User policy</h3>
+        <p class="hint">Policy id <span class="mono">username</span>, encrypted with Basic256Sha256 unless the channel is already SignAndEncrypt. The first user is trapsnmp / trapsnmp.</p>
+        <div class="chips" id="opc-users"></div>
+        <form id="opc-user-form" class="split">
+          <label class="field">
+            <span>User</span>
+            <input name="name" maxlength="32" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span>Password</span>
+            <input name="password" type="password" minlength="8" maxlength="64" autocomplete="new-password" />
+          </label>
+          <div class="actions">
+            <button type="submit" class="primary">Add user</button>
+          </div>
+        </form>
+        <h3 class="subhead">Rejected clients</h3>
+        <p class="hint">A secure client is rejected until its certificate is trusted. Trust moves it from data/pki/rejected to data/pki/trusted/certs.</p>
+        <div id="cert-rejected"></div>
         <h3 class="subhead">Forward as a client</h3>
         <p class="hint">Each new trap is also written, as JSON, to a node on any OPC UA server that accepts anonymous access.</p>
         <form id="forward-form">
