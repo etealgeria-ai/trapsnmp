@@ -109,6 +109,8 @@ function render(data) {
   renderReadback(data.readback);
   renderDetail(traps.find((trap) => trap.id === state.selected));
   renderDiag(data);
+  renderAgent(data.agent);
+  renderTags(data.tags);
   const trace = document.getElementById("trace");
   const lines = data.trace || [];
   trace.innerHTML = lines.length
@@ -132,6 +134,7 @@ function renderDiag(data) {
     check((snmp.communities || []).length > 0, "Communities", (snmp.communities || []).join(", ") || "None"),
     check((snmp.users || []).length > 0, "SNMPv3", users || "No user"),
     check(opc.ready, "OPC UA server", opc.ready ? `${opc.endpoint} · ${opc.security}` : (opc.error || "Starting")),
+    check(data.agent?.listening, "SNMP agent", data.agent?.listening ? `UDP ${data.agent.port} · ${data.agent.objectId}` : (data.agent?.error || "Not listening")),
     check(readback.ok, "Client read", readback.ok ? "Latest read succeeded" : (readback.error || "No read")),
   ];
   if (last && readback.ok) {
@@ -481,6 +484,171 @@ function syncUserFields() {
 
 document.getElementById("user-level").addEventListener("change", syncUserFields);
 
+function renderTags(tags) {
+  if (!tags) return;
+  const bits = document.getElementById("trap-bits");
+  if (bits) {
+    const rows = tags.bits || [];
+    bits.innerHTML = rows.length
+      ? rows.map((row) => `
+          <div class="bit ${row.value ? "on" : ""}">
+            <span class="sev ${row.value ? "alarm" : ""}">${row.value ? "True" : "False"}</span>
+            <span class="addr">${esc(row.address)}</span>
+          </div>
+        `).join("")
+      : '<p class="empty">No trap tags yet.</p>';
+  }
+  const count = document.getElementById("events-count");
+  if (count) count.textContent = String(tags.count ?? 0);
+  const latest = document.getElementById("events-001");
+  if (latest) latest.textContent = tags.latest || "—";
+  const fields = document.getElementById("events-fields");
+  if (fields) {
+    const names = ["Time", "Enterprise", "Generic", "Specific", "SysUpTime", "Varbinds", "First OID", "First value"];
+    const values = tags.latestFields || [];
+    fields.innerHTML = names.map((name, index) => `
+      <tr>
+        <td>${name}</td>
+        <td class="oid">${esc(values[index] || "—")}</td>
+      </tr>
+    `).join("");
+  }
+  const form = document.getElementById("tag-filter");
+  if (form && !(document.activeElement && form.contains(document.activeElement))) {
+    form.elements.community.value = tags.community || "";
+    form.elements.deviceIp.value = tags.deviceIp || "";
+  }
+}
+
+document.getElementById("tag-filter")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  try {
+    const response = await fetch("/api/tags", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        community: form.elements.community.value,
+        deviceIp: form.elements.deviceIp.value,
+      }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || "Could not save the filter");
+    setBench("Trap tag filter saved.");
+    await tick();
+  } catch (err) {
+    setBench(err.message, true);
+  }
+});
+
+function renderAgent(agent) {
+  if (!agent) return;
+  const port = document.getElementById("agent-port");
+  if (port) port.textContent = agent.listening ? `UDP ${agent.port}` : (agent.error || "Down");
+  const oid = document.getElementById("agent-oid");
+  if (oid) oid.textContent = agent.objectId || "—";
+  const notify = document.getElementById("agent-notify");
+  if (notify) notify.textContent = agent.lastNotify || (agent.destinations?.length ? "Waiting for a trap" : "No destinations");
+  const note = document.getElementById("agent-note");
+  if (note) note.textContent = agent.note || agent.notifyError || "";
+  const trapOid = document.getElementById("agent-trap-oid");
+  if (trapOid) trapOid.textContent = agent.trapOid || "—";
+  const form = document.getElementById("agent-form");
+  if (form && !(document.activeElement && form.contains(document.activeElement))) {
+    form.elements.description.value = agent.description || "";
+    form.elements.contact.value = agent.contact || "";
+    form.elements.name.value = agent.name || "";
+    form.elements.location.value = agent.location || "";
+    form.elements.enabled.checked = !!agent.enabled;
+    form.elements.acceptAll.checked = !!agent.acceptAll;
+    form.elements.threshold.value = agent.threshold ?? 0;
+    const select = form.elements.comparison;
+    if (select.options.length !== (agent.comparisons || []).length) {
+      select.innerHTML = (agent.comparisons || []).map((item) => `<option value="${esc(item)}">${esc(item)}</option>`).join("");
+    }
+    if ([...select.options].some((option) => option.value === agent.comparison)) select.value = agent.comparison;
+  }
+  const system = document.getElementById("agent-system");
+  if (system) {
+    system.innerHTML = (agent.system || []).map((row) => `
+      <tr>
+        <td>${esc(row.name)}</td>
+        <td>${esc(row.value || "—")}</td>
+        <td class="oid">${esc(row.localOid)}</td>
+      </tr>
+    `).join("");
+  }
+  const items = document.getElementById("agent-items");
+  if (items) {
+    items.innerHTML = (agent.items || []).map((row) => `
+      <tr>
+        <td>${esc(row.name)}</td>
+        <td>${esc(row.value || "—")}</td>
+        <td class="oid">${esc(row.oid)}</td>
+      </tr>
+    `).join("");
+  }
+  const dest = document.getElementById("agent-destinations");
+  if (dest) {
+    dest.innerHTML = (agent.destinations || []).length
+      ? agent.destinations.map((row) => `<span class="chip">${esc(row.address)}:${row.port} · ${esc(row.community)} · V${esc(row.version)}</span>`).join("")
+      : '<p class="empty">No trap recipients.</p>';
+  }
+}
+
+document.getElementById("agent-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  try {
+    const response = await fetch("/api/agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "settings",
+        description: form.elements.description.value,
+        contact: form.elements.contact.value,
+        name: form.elements.name.value,
+        location: form.elements.location.value,
+        enabled: form.elements.enabled.checked,
+        acceptAll: form.elements.acceptAll.checked,
+        comparison: form.elements.comparison.value,
+        threshold: form.elements.threshold.value,
+      }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || "Could not save the agent");
+    setBench("Agent saved.");
+    await tick();
+  } catch (err) {
+    setBench(err.message, true);
+  }
+});
+
+document.getElementById("dest-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  try {
+    const response = await fetch("/api/agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "destination",
+        address: form.elements.address.value,
+        port: form.elements.port.value,
+        community: form.elements.community.value,
+        version: form.elements.version.value,
+      }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || "Could not add the recipient");
+    form.elements.address.value = "";
+    setBench("Trap recipient added.");
+    await tick();
+  } catch (err) {
+    setBench(err.message, true);
+  }
+});
+
 document.querySelector(".nav").addEventListener("click", (event) => {
   const button = event.target.closest("[data-view]");
   if (!button) return;
@@ -488,7 +656,7 @@ document.querySelector(".nav").addEventListener("click", (event) => {
 });
 
 const initial = (location.hash || "").replace("#", "");
-if (["monitor", "send", "access", "publish", "diag"].includes(initial)) showView(initial);
+if (["monitor", "tags", "send", "access", "agent", "publish", "diag"].includes(initial)) showView(initial);
 
 document.getElementById("run-diag").addEventListener("click", async () => {
   const button = document.getElementById("run-diag");

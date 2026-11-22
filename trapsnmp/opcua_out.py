@@ -9,7 +9,17 @@ from datetime import datetime, timezone
 
 from asyncua import Client, Server, ua
 
+from trapsnmp.trap_tags import startup_nodes
+
 log = logging.getLogger("trapsnmp.opcua")
+
+_TAG_TYPES = {
+    "bool": ua.VariantType.Boolean,
+    "string": ua.VariantType.String,
+    "int": ua.VariantType.Int32,
+    "uint": ua.VariantType.UInt32,
+}
+_TAG_INITIAL = {"bool": False, "string": "", "int": 0, "uint": 0}
 
 NS_URI = "urn:trapsnmp:snmp"
 SLOT_COUNT = 8
@@ -53,6 +63,9 @@ class OpcuaBridge:
         self._forwarder: Client | None = None
         self._forward_url = ""
         self._read_lock = asyncio.Lock()
+        self._tag_store = None
+        self._tags_parent = None
+        self._ns = 0
         self.upstream = {
             "enabled": False,
             "endpoint": "",
@@ -113,6 +126,11 @@ class OpcuaBridge:
             await add_var(upstream, "Upstream.Status", "Status", "Not forwarding", ua.VariantType.String)
             await add_var(upstream, "Upstream.Forwarded", "Forwarded", 0, ua.VariantType.UInt64)
 
+            tags = await root.add_object(ua.NodeId("Tags", idx), "Tags")
+            self._tags_parent = tags
+            self._ns = idx
+            await self._install_tag_nodes()
+
             event_type = await server.create_custom_event_type(
                 idx,
                 "SnmpTrapEvent",
@@ -127,6 +145,7 @@ class OpcuaBridge:
             )
             self._events = await server.get_event_generator(event_type, root)
             await server.start()
+            self._arm_tag_writes(server)
         except Exception as exc:
             self.error = str(exc)
             self.ready = False
@@ -332,6 +351,91 @@ class OpcuaBridge:
         except Exception:
             log.exception("could not mirror upstream status")
         return "ok"
+
+    def bind_tag_store(self, store) -> None:
+        self._tag_store = store
+
+    async def _install_tag_nodes(self) -> None:
+        for address, kind in startup_nodes():
+            await self._ensure_tag(address, kind)
+
+    async def _ensure_tag(self, address: str, kind: str):
+        if address in self.nodes or self._tags_parent is None:
+            return self.nodes.get(address)
+        variant = _TAG_TYPES[kind]
+        initial = _TAG_INITIAL[kind]
+        node = await self._tags_parent.add_variable(
+            ua.NodeId(address, self._ns),
+            ua.QualifiedName(address, self._ns),
+            initial,
+            varianttype=variant,
+        )
+        self.nodes[address] = node
+        self.node_ids[address] = f"ns={self._ns};s={address}"
+        writable = address == "EVENTS_COUNT" or (kind == "bool" and "[" not in address)
+        if writable:
+            await node.set_writable(True)
+        return node
+
+    def _arm_tag_writes(self, server: Server) -> None:
+        bridge = self
+
+        def setter(node, _attr, value):
+            node.attributes[_attr].value = value
+            ident = node.nodeid.Identifier
+            if bridge._tag_store is None or not isinstance(ident, str):
+                return
+            raw = None if value.Value is None else value.Value.Value
+            if ident == "EVENTS_COUNT" or ident in bridge._tag_store.bits or ident.endswith("(T)") or ident.startswith("TRAP_"):
+                bridge._tag_store.note_write(ident, raw)
+
+        for address, node in list(self.nodes.items()):
+            if address == "EVENTS_COUNT" or address.endswith("(T)") or address.startswith("TRAP_"):
+                if "[" in address:
+                    continue
+                server.set_attribute_value_setter(node.nodeid, setter)
+
+    async def write_tags(self, updates: list[dict]) -> int:
+        if not self.ready:
+            return 0
+        written = 0
+        for item in updates:
+            address = item["address"]
+            kind = item["variant"]
+            try:
+                if address not in self.nodes:
+                    await self._ensure_tag(address, kind)
+                    if self._server is not None and kind == "bool":
+                        self._arm_one(address)
+                await self._write(address, item["value"], _TAG_TYPES[kind])
+                written += 1
+            except Exception:
+                log.exception("tag write failed for %s", address)
+        return written
+
+    def _arm_one(self, address: str) -> None:
+        node = self.nodes.get(address)
+        if node is None or self._server is None:
+            return
+
+        bridge = self
+
+        def setter(ndata, attr, value):
+            ndata.attributes[attr].value = value
+            if bridge._tag_store is not None:
+                raw = None if value.Value is None else value.Value.Value
+                bridge._tag_store.note_write(address, raw)
+
+        self._server.set_attribute_value_setter(node.nodeid, setter)
+
+    async def read_tag(self, address: str):
+        if not self.ready or address not in self.node_ids:
+            return None
+        async with self._read_lock:
+            if self._reader is None:
+                await self._connect_reader()
+            node = self._reader.get_node(self.node_ids[address])
+            return await node.read_value()
 
     async def _write(self, key: str, value, variant: ua.VariantType) -> None:
         await self.nodes[key].write_value(value, variant)

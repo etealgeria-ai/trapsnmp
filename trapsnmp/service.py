@@ -10,7 +10,9 @@ from collections import deque
 from datetime import datetime, timezone
 
 from trapsnmp import __version__
+from trapsnmp.agent import SnmpAgent
 from trapsnmp.catalog import OID_RE, PRESETS, classify_trap, display_value, oid_name
+from trapsnmp.trap_tags import TrapTags
 from trapsnmp.opcua_out import NS_URI, OpcuaBridge
 from trapsnmp.snmp_in import SnmpTrapIn
 
@@ -25,6 +27,9 @@ class Service:
     def __init__(self) -> None:
         self.snmp = SnmpTrapIn(self._ingest)
         self.opc = OpcuaBridge()
+        self.tags = TrapTags()
+        self.opc.bind_tag_store(self.tags)
+        self.agent = SnmpAgent()
         self.traps: deque[dict] = deque(maxlen=50)
         self.trace: deque[str] = deque(maxlen=40)
         self.counts = {"traps": 0, "informs": 0}
@@ -40,6 +45,7 @@ class Service:
             return
         self._started = True
         await self.snmp.start()
+        await self.agent.start()
         await self.opc.start()
         await self.opc.set_listener(self.snmp.listening, self.snmp.port or 0)
         if self.snmp.listening:
@@ -58,6 +64,12 @@ class Service:
             self._trace(f"OPC UA server ready at {self.opc.endpoint}")
         elif self.opc.error:
             self._trace(f"OPC UA server failed: {self.opc.error}")
+        if self.agent.listening:
+            self._trace(
+                f"SNMP agent on UDP {self.agent.port} at {self.agent.object_id()}"
+            )
+        elif self.agent.error:
+            self._trace(f"SNMP agent failed: {self.agent.error}")
 
     async def snapshot(self) -> dict:
         readback = await self.opc.readback()
@@ -104,6 +116,8 @@ class Service:
             ],
             "version": __version__,
             "startedAt": self.started_at.isoformat(timespec="seconds"),
+            "agent": self.agent.snapshot(),
+            "tags": self.tags.snapshot(),
         }
 
     async def diagnose(self) -> dict:
@@ -158,6 +172,39 @@ class Service:
                     "Readback",
                     matched,
                     readback.get("trapName") or readback.get("error") or "Empty read",
+                )
+        if self.agent.listening:
+            try:
+                descr = await self.agent.read_object("1.3.6.1.2.1.1.1.0")
+                last = await self.agent.read_object(self.agent.local_oid("lastTrapDescr"))
+            except Exception as exc:
+                step("SNMP agent", False, str(exc))
+            else:
+                step("SNMP agent", bool(descr), f"UDP {self.agent.port} · sysDescr {descr}")
+                step(
+                    "Trap mapping",
+                    bool(last),
+                    last or "lastTrapDescr is empty until a trap arrives",
+                )
+        else:
+            step("SNMP agent", False, self.agent.error or "Not listening")
+        if self.opc.ready:
+            try:
+                latched = await self.opc.read_tag("TRAP_V2C:.1.3.6.1.6.3.1.1.5.2")
+                queued = await self.opc.read_tag("EVENTS_001")
+            except Exception as exc:
+                step("Trap tag", False, str(exc))
+            else:
+                step(
+                    "Trap tag",
+                    latched is True,
+                    "TRAP_V2C warmStart latched" if latched is True else f"Boolean is {latched}",
+                )
+                text = queued if isinstance(queued, str) else ""
+                step(
+                    "Events queue",
+                    "1.3.6.1.6.3.1.1.5" in text,
+                    text[:140] or "EVENTS_001 is empty",
                 )
         elapsed = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
         return {
@@ -309,6 +356,14 @@ class Service:
             extra = ", forward failed"
         if published.get("error"):
             extra += f", OPC UA error: {published['error']}"
+        if self.tags.accept(public):
+            try:
+                written = await self.opc.write_tags(self.tags.apply(public))
+                published["written"] = int(published.get("written") or 0) + written
+            except Exception:
+                log.exception("trap tag update failed")
+        else:
+            extra += ", kept off the trap tags"
         who = public["user"] if public["version"] == "v3" else (public["community"] or "—")
         how = f" {public['securityLevel']}" if public["version"] == "v3" else ""
         self._trace(
@@ -317,6 +372,11 @@ class Service:
             f"→ {published.get('written', 0)} node writes"
             f"{', event' if published.get('event') else ''}{extra}"
         )
+        try:
+            self.agent.observe(public)
+            asyncio.create_task(self.agent.maybe_notify(public))
+        except Exception:
+            log.exception("agent update failed")
         pending = self._pending
         if (
             pending is not None

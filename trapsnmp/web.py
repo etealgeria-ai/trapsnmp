@@ -135,6 +135,59 @@ async def handle_diag(request: web.Request) -> web.Response:
     return web.json_response(report)
 
 
+async def handle_agent(request: web.Request) -> web.Response:
+    service: Service = request.app["service"]
+    try:
+        body = await request.json()
+    except Exception:
+        return _json_error("Expected JSON.")
+    if not isinstance(body, dict):
+        return _json_error("Expected a JSON object.")
+    action = str(body.get("action") or "settings")
+    try:
+        if action == "settings":
+            service.agent.configure(body)
+        elif action == "community":
+            service.agent.add_community(str(body.get("name") or ""), str(body.get("rights") or ""))
+        elif action == "host":
+            service.agent.add_host(str(body.get("address") or ""))
+        elif action == "destination":
+            service.agent.add_destination(
+                str(body.get("address") or ""),
+                int(body.get("port") or 162),
+                str(body.get("community") or "public"),
+                str(body.get("version") or "2c"),
+            )
+        elif action == "remove":
+            service.agent.remove(str(body.get("kind") or ""), str(body.get("key") or ""))
+        else:
+            raise ValueError("Unknown agent action.")
+    except (ValueError, TypeError) as exc:
+        return _json_error(str(exc))
+    except Exception as exc:
+        log.exception("agent update failed")
+        return _json_error(str(exc), 500)
+    return web.json_response({"ok": True, "agent": service.agent.snapshot()})
+
+
+async def handle_tags(request: web.Request) -> web.Response:
+    service: Service = request.app["service"]
+    try:
+        body = await request.json()
+    except Exception:
+        return _json_error("Expected JSON.")
+    if not isinstance(body, dict):
+        return _json_error("Expected a JSON object.")
+    try:
+        service.tags.configure(
+            community=str(body.get("community") or ""),
+            device_ip=str(body.get("deviceIp") or ""),
+        )
+    except (TypeError, ValueError) as exc:
+        return _json_error(str(exc))
+    return web.json_response({"ok": True, "tags": service.tags.snapshot()})
+
+
 async def handle_upstream(request: web.Request) -> web.Response:
     service: Service = request.app["service"]
     try:
@@ -168,6 +221,8 @@ async def serve(service: Service) -> None:
     app.router.add_post("/api/community", handle_community)
     app.router.add_post("/api/user", handle_user)
     app.router.add_post("/api/diag", handle_diag)
+    app.router.add_post("/api/agent", handle_agent)
+    app.router.add_post("/api/tags", handle_tags)
     app.router.add_post("/api/upstream", handle_upstream)
     app.router.add_static("/static", STATIC, show_index=False)
     runner = web.AppRunner(app)
