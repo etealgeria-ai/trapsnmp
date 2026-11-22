@@ -170,6 +170,34 @@ async def handle_agent(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "agent": service.agent.snapshot()})
 
 
+async def handle_radios(request: web.Request) -> web.Response:
+    service: Service = request.app["service"]
+    try:
+        body = await request.json()
+    except Exception:
+        return _json_error("Expected JSON.")
+    if not isinstance(body, dict):
+        return _json_error("Expected a JSON object.")
+    action = str(body.get("action") or "save")
+    try:
+        if action in ("save", "poll"):
+            service.radios.configure(
+                host=str(body.get("host") or ""),
+                community=str(body.get("community") or "public"),
+                port=int(body.get("port") or 161),
+                interval=int(body.get("interval") or 15),
+                enabled=bool(body.get("enabled")),
+            )
+        if action == "poll":
+            await service.radios.poll()
+    except (TypeError, ValueError) as exc:
+        return _json_error(str(exc))
+    except Exception as exc:
+        log.exception("radio poll failed")
+        return _json_error(str(exc), 500)
+    return web.json_response({"ok": True, "radios": service.radio_view()})
+
+
 async def handle_tags(request: web.Request) -> web.Response:
     service: Service = request.app["service"]
     try:
@@ -223,6 +251,7 @@ async def serve(service: Service) -> None:
     app.router.add_post("/api/diag", handle_diag)
     app.router.add_post("/api/agent", handle_agent)
     app.router.add_post("/api/tags", handle_tags)
+    app.router.add_post("/api/radios", handle_radios)
     app.router.add_post("/api/upstream", handle_upstream)
     app.router.add_static("/static", STATIC, show_index=False)
     runner = web.AppRunner(app)

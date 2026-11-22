@@ -111,6 +111,7 @@ function render(data) {
   renderDiag(data);
   renderAgent(data.agent);
   renderTags(data.tags);
+  renderRadios(data.radios);
   const trace = document.getElementById("trace");
   const lines = data.trace || [];
   trace.innerHTML = lines.length
@@ -484,6 +485,79 @@ function syncUserFields() {
 
 document.getElementById("user-level").addEventListener("change", syncUserFields);
 
+function rssiClass(value) {
+  if (value === null || value === undefined || value === "") return "";
+  const number = Number(value);
+  if (Number.isNaN(number)) return "";
+  if (number >= -70) return "good";
+  if (number >= -85) return "fair";
+  return "poor";
+}
+
+function renderRadios(radios) {
+  if (!radios) return;
+  const status = document.getElementById("radio-status");
+  if (status) {
+    const when = radios.updatedAt ? `Last poll ${radios.updatedAt}` : "Not polled yet";
+    status.textContent = radios.error
+      ? `${radios.error} · ${when}`
+      : `${radios.count} remote${radios.count === 1 ? "" : "s"} on ${radios.host} · ${when}`;
+  }
+  const note = document.getElementById("radio-note");
+  if (note) note.textContent = radios.enabled ? `Polling every ${radios.interval}s` : "";
+  const body = document.getElementById("radio-rows");
+  if (body) {
+    const slots = radios.slots || [];
+    const cell = (value) => (value === null || value === undefined || value === "" ? "—" : esc(String(value)));
+    body.innerHTML = slots.length
+      ? slots.map((row) => `
+          <tr>
+            <td class="oid">${esc(row.tag)}</td>
+            <td class="oid">${cell(row.remote_mac)}</td>
+            <td class="oid">${cell(row.remote_ip)}</td>
+            <td class="rssi ${rssiClass(row.rssi)}">${cell(row.rssi)}</td>
+            <td class="rssi ${rssiClass(row.down)}">${cell(row.down)}</td>
+            <td>${cell(row.if_index)}</td>
+          </tr>
+        `).join("")
+      : '<tr><td colspan="6">Tags are not ready yet.</td></tr>';
+  }
+  const form = document.getElementById("radio-form");
+  if (form && !(document.activeElement && form.contains(document.activeElement))) {
+    form.elements.host.value = radios.host || "";
+    form.elements.community.value = radios.community || "public";
+    form.elements.port.value = radios.port || 161;
+    form.elements.interval.value = radios.interval || 15;
+    form.elements.enabled.checked = !!radios.enabled;
+  }
+}
+
+document.getElementById("radio-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const intent = event.submitter?.value || "poll";
+  try {
+    const response = await fetch("/api/radios", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: intent,
+        host: form.elements.host.value,
+        community: form.elements.community.value,
+        port: Number(form.elements.port.value),
+        interval: Number(form.elements.interval.value),
+        enabled: form.elements.enabled.checked,
+      }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || "Radio poll failed");
+    setBench(intent === "poll" ? "Polled the LN master." : "Master settings saved.");
+    await tick();
+  } catch (err) {
+    setBench(err.message, true);
+  }
+});
+
 function renderTags(tags) {
   if (!tags) return;
   const bits = document.getElementById("trap-bits");
@@ -656,7 +730,7 @@ document.querySelector(".nav").addEventListener("click", (event) => {
 });
 
 const initial = (location.hash || "").replace("#", "");
-if (["monitor", "tags", "send", "access", "agent", "publish", "diag"].includes(initial)) showView(initial);
+if (["monitor", "tags", "send", "access", "agent", "config", "radios", "publish", "diag"].includes(initial)) showView(initial);
 
 document.getElementById("run-diag").addEventListener("click", async () => {
   const button = document.getElementById("run-diag");

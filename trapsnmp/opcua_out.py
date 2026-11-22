@@ -23,6 +23,7 @@ _TAG_INITIAL = {"bool": False, "string": "", "int": 0, "uint": 0}
 
 NS_URI = "urn:trapsnmp:snmp"
 SLOT_COUNT = 8
+REMOTE_TAG_COUNT = 50
 
 LATEST_FIELDS = (
     ("Source", ua.VariantType.String, ""),
@@ -65,6 +66,10 @@ class OpcuaBridge:
         self._read_lock = asyncio.Lock()
         self._tag_store = None
         self._tags_parent = None
+        self._radios_parent = None
+        self._radio_folders: dict = {}
+        self._radio_keys: set[str] = set()
+        self._radio_slots = 0
         self._ns = 0
         self.upstream = {
             "enabled": False,
@@ -129,6 +134,18 @@ class OpcuaBridge:
             tags = await root.add_object(ua.NodeId("Tags", idx), "Tags")
             self._tags_parent = tags
             self._ns = idx
+            radios = await root.add_object(ua.NodeId("Radios", idx), "Radios")
+            self._radios_parent = radios
+            await add_var(radios, "Radios.Count", "Count", 0, ua.VariantType.UInt32)
+            await add_var(radios, "Radios.Master", "Master", "", ua.VariantType.String)
+            await add_var(radios, "Radios.Error", "Error", "", ua.VariantType.String)
+            for number in range(1, REMOTE_TAG_COUNT + 1):
+                folder = await radios.add_object(ua.NodeId(f"Remote{number}", idx), f"Remote{number}")
+                await add_var(folder, f"Remote{number}.remote_mac", "remote_mac", "", ua.VariantType.String)
+                await add_var(folder, f"Remote{number}.remote_ip", "remote_ip", "", ua.VariantType.String)
+                await add_var(folder, f"Remote{number}.rssi", "rssi", 0, ua.VariantType.Int32)
+                await add_var(folder, f"Remote{number}.down", "down", 0, ua.VariantType.Int32)
+                await add_var(folder, f"Remote{number}.if_index", "if_index", 0, ua.VariantType.UInt32)
             await self._install_tag_nodes()
 
             event_type = await server.create_custom_event_type(
@@ -412,6 +429,98 @@ class OpcuaBridge:
             except Exception:
                 log.exception("tag write failed for %s", address)
         return written
+
+    async def publish_radios(self, snap: dict) -> int:
+        if not self.ready:
+            return 0
+        written = 0
+        master = f"{snap.get('host', '')}:{snap.get('port', '')}"
+        try:
+            await self._write("Radios.Count", int(snap.get("count") or 0), ua.VariantType.UInt32)
+            await self._write("Radios.Master", master, ua.VariantType.String)
+            await self._write("Radios.Error", str(snap.get("error") or ""), ua.VariantType.String)
+            written += 3
+        except Exception:
+            log.exception("radio summary write failed")
+        current = set()
+        for remote in snap.get("remotes") or []:
+            key = remote["key"]
+            current.add(key)
+            rssi = remote.get("rssi")
+            down = remote.get("downRssi")
+            fields = [
+                ("Present", True, "bool"),
+                ("Mac", remote["mac"], "string"),
+                ("Ip", remote.get("ip") or "", "string"),
+                ("Name", remote.get("name") or "", "string"),
+                ("Link", remote.get("link") or "", "string"),
+                ("IfIndex", int(remote.get("ifIndex") or 0), "uint"),
+            ]
+            if rssi is not None:
+                fields.append(("Rssi", int(rssi), "int"))
+            if down is not None:
+                fields.append(("DownRssi", int(down), "int"))
+            for name, value, kind in fields:
+                written += await self._put_radio(key, f"Radios.{key}.{name}", name, value, kind)
+        remotes = list(snap.get("remotes") or [])
+        for number in range(1, REMOTE_TAG_COUNT + 1):
+            remote = remotes[number - 1] if number <= len(remotes) else None
+            if remote is None:
+                mac, ip, rssi, down, if_index = "", "", 0, 0, 0
+            else:
+                mac = remote.get("mac") or ""
+                ip = "" if not remote.get("ip") or remote.get("ip") == "—" else remote["ip"]
+                rssi = 0 if remote.get("rssi") is None else int(remote["rssi"])
+                down = 0 if remote.get("downRssi") is None else int(remote["downRssi"])
+                if_index = int(remote.get("ifIndex") or 0)
+            fields = (
+                ("remote_mac", mac, ua.VariantType.String),
+                ("remote_ip", ip, ua.VariantType.String),
+                ("rssi", rssi, ua.VariantType.Int32),
+                ("down", down, ua.VariantType.Int32),
+                ("if_index", if_index, ua.VariantType.UInt32),
+            )
+            for name, value, variant in fields:
+                try:
+                    await self._write(f"Remote{number}.{name}", value, variant)
+                    written += 1
+                except Exception:
+                    log.exception("remote tag write failed for Remote%s.%s", number, name)
+        for key in list(self._radio_keys):
+            if key in current:
+                continue
+            written += await self._put_radio(key, f"Radios.{key}.Present", "Present", False, "bool")
+        self._radio_keys = current
+        return written
+
+    async def _put_radio(self, key: str, address: str, browse: str, value, kind: str) -> int:
+        try:
+            await self._ensure_radio(key, address, browse, kind)
+            await self._write(address, value, _TAG_TYPES[kind])
+        except Exception:
+            log.exception("radio write failed for %s", address)
+            return 0
+        return 1
+
+    async def _ensure_radio(self, key: str, address: str, browse: str, kind: str):
+        if address in self.nodes or self._radios_parent is None:
+            return self.nodes.get(address)
+        folder = self._radio_folders.get(key)
+        if folder is None:
+            folder = await self._radios_parent.add_object(
+                ua.NodeId(f"Radios.{key}", self._ns),
+                key,
+            )
+            self._radio_folders[key] = folder
+        node = await folder.add_variable(
+            ua.NodeId(address, self._ns),
+            ua.QualifiedName(browse, self._ns),
+            _TAG_INITIAL[kind],
+            varianttype=_TAG_TYPES[kind],
+        )
+        self.nodes[address] = node
+        self.node_ids[address] = f"ns={self._ns};s={address}"
+        return node
 
     def _arm_one(self, address: str) -> None:
         node = self.nodes.get(address)

@@ -12,8 +12,9 @@ from datetime import datetime, timezone
 from trapsnmp import __version__
 from trapsnmp.agent import SnmpAgent
 from trapsnmp.catalog import OID_RE, PRESETS, classify_trap, display_value, oid_name
+from trapsnmp.radios import OrbitMaster
 from trapsnmp.trap_tags import TrapTags
-from trapsnmp.opcua_out import NS_URI, OpcuaBridge
+from trapsnmp.opcua_out import NS_URI, REMOTE_TAG_COUNT, OpcuaBridge
 from trapsnmp.snmp_in import SnmpTrapIn
 
 log = logging.getLogger("trapsnmp")
@@ -30,6 +31,8 @@ class Service:
         self.tags = TrapTags()
         self.opc.bind_tag_store(self.tags)
         self.agent = SnmpAgent()
+        self.radios = OrbitMaster(self._on_radios)
+        self._radio_trace = ""
         self.traps: deque[dict] = deque(maxlen=50)
         self.trace: deque[str] = deque(maxlen=40)
         self.counts = {"traps": 0, "informs": 0}
@@ -70,6 +73,40 @@ class Service:
             )
         elif self.agent.error:
             self._trace(f"SNMP agent failed: {self.agent.error}")
+        self.radios._ensure_loop()
+
+    def radio_view(self) -> dict:
+        snap = self.radios.snapshot()
+        index = self.opc.namespace_index or 0
+        slots = []
+        remotes = snap["remotes"]
+        for slot in range(1, REMOTE_TAG_COUNT + 1):
+            row = remotes[slot - 1] if slot <= len(remotes) else None
+            node = f"ns={index};s=Remote{slot}" if index else f"Remote{slot}"
+            if row is not None:
+                row["rssiNode"] = f"{node}.rssi"
+            ip = "" if not row or row.get("ip") in (None, "", "—") else row["ip"]
+            slots.append(
+                {
+                    "tag": f"Remote{slot}",
+                    "node": node,
+                    "remote_mac": row["mac"] if row else "",
+                    "remote_ip": ip,
+                    "rssi": None if row is None else row.get("rssi"),
+                    "down": None if row is None else row.get("downRssi"),
+                    "if_index": None if row is None else row.get("ifIndex"),
+                }
+            )
+        snap["slots"] = slots
+        return snap
+
+    async def _on_radios(self, snap: dict) -> None:
+        note = snap.get("error") or f"{snap['host']}: {snap['count']} remote" + ("" if snap["count"] == 1 else "s")
+        if note != self._radio_trace:
+            self._radio_trace = note
+            self._trace("Radio poll failed: " + snap["error"] if snap.get("error") else "Radio poll " + note)
+        if self.opc.ready:
+            await self.opc.publish_radios(snap)
 
     async def snapshot(self) -> dict:
         readback = await self.opc.readback()
@@ -118,6 +155,7 @@ class Service:
             "startedAt": self.started_at.isoformat(timespec="seconds"),
             "agent": self.agent.snapshot(),
             "tags": self.tags.snapshot(),
+            "radios": self.radio_view(),
         }
 
     async def diagnose(self) -> dict:
