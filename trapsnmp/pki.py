@@ -131,14 +131,33 @@ class Pki:
         }
 
     def trust(self, name: str) -> dict:
+        return self._move(name, self.rejected, self.trusted, "That certificate is not in the rejected list.")
+
+    def reject(self, name: str) -> dict:
+        return self._move(name, self.trusted, self.rejected, "That certificate is not in the trusted list.")
+
+    def delete(self, name: str, where: str) -> dict:
+        folder = {"trusted": self.trusted, "rejected": self.rejected}.get(where)
+        if folder is None:
+            raise ValueError("Unknown certificate list.")
+        path = folder / self._named(name)
+        if not path.is_file():
+            raise ValueError("That certificate is not in the list.")
+        path.unlink()
+        return self.summary()
+
+    def _named(self, name: str) -> str:
         if not _NAME.fullmatch(name or ""):
             raise ValueError("Unknown certificate.")
-        source = self.rejected / name
-        if not source.is_file():
-            raise ValueError("That certificate is not in the rejected list.")
-        target = self.trusted / name
-        target.write_bytes(source.read_bytes())
-        source.unlink()
+        return name
+
+    def _move(self, name: str, source: Path, dest: Path, missing: str) -> dict:
+        src = source / self._named(name)
+        if not src.is_file():
+            raise ValueError(missing)
+        dest.mkdir(parents=True, exist_ok=True)
+        _write_file(dest / src.name, src.read_bytes())
+        src.unlink()
         return self.summary()
 
 
@@ -155,10 +174,19 @@ class ClientCertValidator:
         if _matches(certificate, self.trusted):
             return
         self.rejected.mkdir(parents=True, exist_ok=True)
-        (self.rejected / f"{_thumb(certificate).replace(':', '')}.der").write_bytes(
-            certificate.public_bytes(Encoding.DER)
+        _write_file(
+            self.rejected / f"{_thumb(certificate).replace(':', '')}.der",
+            certificate.public_bytes(Encoding.DER),
         )
         raise ServiceError(ua.StatusCodes.BadCertificateUntrusted)
+
+
+def _write_file(path: Path, data: bytes) -> None:
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    with os.fdopen(descriptor, "wb") as handle:
+        handle.write(data)
+        handle.flush()
+        os.fsync(handle.fileno())
 
 
 def _certs(folder: Path) -> list[Path]:

@@ -556,8 +556,11 @@
             <button type="submit" class="primary">Add user</button>
           </div>
         </form>
-        <h3 class="subhead">Rejected clients</h3>
-        <p class="hint">A secure client is rejected until its certificate is trusted. Trust moves it from data/pki/rejected to data/pki/trusted/certs.</p>
+        <h3 class="subhead">Accepted certificates</h3>
+        <p class="hint">Clients whose certificates are listed here may open a secure session. Reject moves one back to the rejected list. Delete removes it. Both lists are stored in data/pki and loaded again after a restart.</p>
+        <div id="cert-trusted"></div>
+        <h3 class="subhead">Rejected certificates</h3>
+        <p class="hint">A secure client is stored here until you accept it. Accept moves it to the trusted list. Delete removes it.</p>
         <div id="cert-rejected"></div>
         <h3 class="subhead">Forward as a client</h3>
         <p class="hint">Each new trap is also written, as JSON, to a node on any OPC UA server that accepts anonymous access.</p>

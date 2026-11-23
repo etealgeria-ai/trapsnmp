@@ -193,7 +193,10 @@ async def handle_opc_user(request: web.Request) -> web.Response:
         if body.get("action") == "remove":
             service.opc.users.remove(str(body.get("name") or ""))
         else:
-            service.opc.users.add(str(body.get("name") or ""), str(body.get("password") or ""))
+            password = body.get("password")
+            if not isinstance(password, str):
+                raise ValueError("Password must be 8–64 characters.")
+            service.opc.users.add(str(body.get("name") or ""), password)
     except ValueError as exc:
         return _json_error(str(exc))
     service.persist()
@@ -208,10 +211,19 @@ async def handle_pki(request: web.Request) -> web.Response:
         body = await request.json()
     except Exception:
         return _json_error("Expected JSON.")
-    if not isinstance(body, dict) or body.get("action") != "trust":
-        return _json_error("Expected a trust action.")
+    if not isinstance(body, dict):
+        return _json_error("Expected a JSON object.")
+    action = str(body.get("action") or "")
+    name = str(body.get("name") or "")
     try:
-        summary = service.opc.pki.trust(str(body.get("name") or ""))
+        if action == "trust":
+            summary = service.opc.pki.trust(name)
+        elif action == "reject":
+            summary = service.opc.pki.reject(name)
+        elif action == "delete":
+            summary = service.opc.pki.delete(name, str(body.get("list") or ""))
+        else:
+            return _json_error("Expected a trust, reject, or delete action.")
     except ValueError as exc:
         return _json_error(str(exc))
     return web.json_response({"ok": True, "certificate": summary})

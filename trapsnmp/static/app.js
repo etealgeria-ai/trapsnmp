@@ -114,6 +114,7 @@ function render(data) {
   const expires = document.getElementById("cert-expires");
   const policies = document.getElementById("cert-policies");
   const rejected = document.getElementById("cert-rejected");
+  const trusted = document.getElementById("cert-trusted");
   if (subject) subject.textContent = cert.subject || "—";
   if (thumb) thumb.textContent = cert.thumbprint || "—";
   if (expires) expires.textContent = cert.expires || "—";
@@ -125,31 +126,9 @@ function render(data) {
     }
   }
   const opcUsers = document.getElementById("opc-users");
-  if (opcUsers) {
-    const names = cert.users || [];
-    const sig = names.join("|");
-    if (opcUsers.dataset.sig !== sig) {
-      opcUsers.dataset.sig = sig;
-      opcUsers.innerHTML = names.map((name) => `
-        <span class="chip">${esc(name)} <button type="button" class="ghost" data-opc-user="${esc(name)}">Remove</button></span>
-      `).join("");
-    }
-  }
-  if (rejected) {
-    const rows = cert.rejected || [];
-    const sig = rows.map((item) => item.name).join("|");
-    if (rejected.dataset.sig !== sig) {
-      rejected.dataset.sig = sig;
-      rejected.innerHTML = rows.length
-        ? rows.map((item) => `
-            <div class="inline">
-              <span class="mono">${esc(item.subject || item.name)}</span>
-              <button type="button" class="ghost" data-trust="${esc(item.name)}">Trust</button>
-            </div>
-          `).join("")
-        : `<p class="empty">No rejected certificates.</p>`;
-    }
-  }
+  if (opcUsers) paintOpcUsers(cert.users || []);
+  renderCertList(trusted, cert.trusted || [], "trusted");
+  renderCertList(rejected, cert.rejected || [], "rejected");
   document.getElementById("up-status").textContent = data.upstream?.enabled
     ? `${data.upstream.status} · ${data.upstream.forwarded} written`
     : (data.upstream?.status || "Not forwarding");
@@ -383,6 +362,44 @@ function showView(name) {
   if (name === "opc") refreshOpc();
 }
 
+function paintOpcUsers(names) {
+  const node = document.getElementById("opc-users");
+  if (!node) return;
+  const sig = names.join("|");
+  if (node.dataset.sig === sig) return;
+  node.dataset.sig = sig;
+  node.innerHTML = names.length
+    ? names.map((name) => `
+        <span class="chip">${esc(name)} <button type="button" class="ghost" data-opc-user="${esc(name)}">Remove</button></span>
+      `).join("")
+    : `<p class="empty">No OPC UA users.</p>`;
+}
+
+function renderCertList(node, rows, list) {
+  if (!node) return;
+  const sig = rows.map((item) => `${item.name}:${item.thumbprint}`).join("|");
+  if (node.dataset.sig === sig) return;
+  node.dataset.sig = sig;
+  if (!rows.length) {
+    node.innerHTML = `<p class="empty">${list === "trusted" ? "No accepted certificates." : "No rejected certificates."}</p>`;
+    return;
+  }
+  const move = list === "trusted" ? "reject" : "trust";
+  const moveLabel = list === "trusted" ? "Reject" : "Accept";
+  node.innerHTML = rows.map((item) => `
+    <div class="cert-row">
+      <div>
+        <span class="mono">${esc(item.subject || item.name)}</span>
+        <span class="hint">${esc(item.thumbprint || item.name)}</span>
+      </div>
+      <div class="actions">
+        <button type="button" class="ghost" data-cert="${move}" data-list="${esc(list)}" data-name="${esc(item.name)}">${moveLabel}</button>
+        <button type="button" class="ghost" data-cert="delete" data-list="${esc(list)}" data-name="${esc(item.name)}">Delete</button>
+      </div>
+    </div>
+  `).join("");
+}
+
 function renderUsers(users) {
   const chips = document.getElementById("users");
   const hint = document.getElementById("user-hint");
@@ -532,8 +549,13 @@ document.getElementById("opc-user-form")?.addEventListener("submit", async (even
   event.preventDefault();
   const form = event.currentTarget;
   try {
-    await post("/api/opc-user", { name: form.elements.name.value, password: form.elements.password });
+    const saved = await post("/api/opc-user", {
+      name: form.elements.name.value,
+      password: form.elements.password.value,
+    });
     form.reset();
+    paintOpcUsers(saved.users || []);
+    setBench("OPC UA user added.");
     await tick();
   } catch (err) {
     setBench(err.message, true);
@@ -551,19 +573,22 @@ document.getElementById("opc-users")?.addEventListener("click", async (event) =>
   }
 });
 
-document.getElementById("cert-rejected")?.addEventListener("click", async (event) => {
-  const button = event.target.closest("[data-trust]");
+document.getElementById("cert-trusted")?.addEventListener("click", onCertAction);
+document.getElementById("cert-rejected")?.addEventListener("click", onCertAction);
+
+async function onCertAction(event) {
+  const button = event.target.closest("[data-cert]");
   if (!button) return;
   button.disabled = true;
   try {
-    await post("/api/pki", { action: "trust", name: button.dataset.trust });
+    await post("/api/pki", { action: button.dataset.cert, name: button.dataset.name, list: button.dataset.list });
     await tick();
   } catch (err) {
     setBench(err.message, true);
   } finally {
     button.disabled = false;
   }
-});
+}
 
 document.getElementById("forward-form").addEventListener("submit", async (event) => {
   event.preventDefault();

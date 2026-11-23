@@ -34,7 +34,7 @@ The Send page can simulate those columns for Remote1 through Remote255 on one RS
 
 ## OPC UA security
 
-The server still accepts an anonymous session on security None. It also offers Basic256Sha256, Aes128-SHA256-RSA-OAEP, and Aes256-SHA256-RSA-PSS, in Sign and SignAndEncrypt. The application certificate is created on first start under `data/pki/own/`. A client certificate that is not trusted is stored in `data/pki/rejected` and can be trusted from the Publish page.
+The server still accepts an anonymous session on security None. It also offers Basic256Sha256, Aes128-SHA256-RSA-OAEP, and Aes256-SHA256-RSA-PSS, in Sign and SignAndEncrypt. The application certificate is created on first start under `data/pki/own/`. A client certificate that is not trusted is stored in `data/pki/rejected` and can be accepted from the Publish page. Accepted certificates are stored in `data/pki/trusted/certs`. Accept, reject, and delete are written to disk and loaded again on the next start.
 
 A username token is offered as well. On the open endpoint the password is encrypted with Basic256Sha256 and the server certificate. The first user is `trapsnmp` / `trapsnmp`.
 

@@ -185,6 +185,13 @@ class Service:
             self._trace(f"OPC UA server ready at {self.opc.endpoint}")
         elif self.opc.error:
             self._trace(f"OPC UA server failed: {self.opc.error}")
+        if self.opc.pki is not None:
+            kept = self.opc.pki.summary()
+            self._trace(
+                "Client certificates loaded: "
+                f"{len(kept.get('trusted') or [])} accepted, "
+                f"{len(kept.get('rejected') or [])} rejected"
+            )
         if self.radios.remotes and self.opc.ready:
             await self.opc.write_rssi_wave(self.radios.remotes)
         if ini_path().exists():

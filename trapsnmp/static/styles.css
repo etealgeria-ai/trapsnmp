@@ -736,5 +736,14 @@ td.oid {
   border-radius: var(--radius);
 }
 
-.login-card h2 { margin: 4px 0 16px; }
+.cert-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.cert-row .hint { display: block; }
 
