@@ -42,6 +42,16 @@ A username token is offered as well. On the open endpoint the password is encryp
 
 Communities, SNMPv3 users, the GE master, the agent, tag filters, upstream OPC UA, OPC UA users, and the last remote values are stored in `data/trapsnmp.ini` and loaded on the next start. The file is mode `0600`. Set `TRAPSNMP_DATA` to choose that folder. Otherwise an existing `/workspace/data` is used, then `./data`. The private key is not written into that file.
 
-The console password is `P@ssw0rd`. It is stored in `[console]` of `data/trapsnmp.ini`. Use `P@ssw0rd` to sign in. Edit that line and restart only if you want a different password. Ten wrong passwords from one address lock it out for 5 minutes, and a sign-in lasts 12 hours. The console is plain HTTP, so use it on a trusted network or behind an HTTPS proxy.
+The console password is `P@ssw0rd`. It is stored in `[console]` of `data/trapsnmp.ini`. Use `P@ssw0rd` to sign in. Edit that line and restart only if you want a different password. Ten wrong passwords from one address lock it out for 5 minutes. Wrong passwords are forgotten after an hour, and a sign-in lasts 12 hours. The console is plain HTTP, so use it on a trusted network or behind an HTTPS proxy.
 
 The RSSI sine stays stopped at startup. Start it from the Send page. Each step is 10 seconds.
+
+## Running continuously
+
+- Memory stays flat under steady trap traffic. Lists, logs, sessions, and queues all have fixed sizes.
+- Each new trap OID or port number adds about 21 OPC UA nodes under `Tags`, and they are kept until restart. After 2,000 such addresses (about 42,000 nodes), new ones get no `TRAP_` tags; their traps still reach `Latest`, `Recent`, `EVENTS_001`–`EVENTS_010`, and the event, and the trace says "trap tag limit reached". Raise `MAX_TRAP_TAGS` in `trap_tags.py` if your devices need more.
+- Each SNMPv3 sender engine ID gets its own copy of the user; at most 1,024 are kept, oldest dropped first.
+- The OPC UA certificate is valid for 15 years. Within 30 days of expiry the gateway warns once a day in the log and trace, and a restart renews it (clients then trust the new one).
+- An unreachable GE master is logged once when polling starts failing and once when it recovers.
+- Logs go to standard output. Run the gateway under systemd or another service manager that rotates logs.
+- The RSSI sine writes about 300 OPC UA nodes per trap (255 traps every 10 s). Leave it off on a production gateway.

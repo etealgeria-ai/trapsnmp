@@ -26,6 +26,7 @@ _MAX_SESSIONS = 100
 _FAIL_DELAY = 1.0
 _FAIL_LIMIT = 10
 _LOCKOUT_SECONDS = 5 * 60
+_FAIL_FORGET_SECONDS = 60 * 60  # wrong passwords older than this no longer count
 _ADDRESS_LOCKS: dict[str, asyncio.Lock] = {}
 
 
@@ -112,6 +113,39 @@ async def _require_login(request: web.Request, handler):
     return _json_error("Sign in required.", 401)
 
 
+def _forget_old_failures(failures: dict[str, tuple[int, float, float]], now: float) -> None:
+    for key, (_count, until, last) in list(failures.items()):
+        if until <= now and now - last > _FAIL_FORGET_SECONDS:
+            del failures[key]
+            gate = _ADDRESS_LOCKS.get(key)
+            if gate is not None and not gate.locked():
+                _ADDRESS_LOCKS.pop(key, None)
+
+
+async def _check_login(request, service, body, failures, address, gate) -> web.Response:
+    async with gate:
+        now = time.monotonic()
+        count, locked_until, _last = failures.get(address, (0, 0.0, 0.0))
+        if locked_until > now:
+            minutes = max(1, round((locked_until - now) / 60))
+            return _json_error(f"Too many wrong passwords. Try again in {minutes} min.", 429)
+        if not _password_ok(str(body.get("password") or ""), service.console_password):
+            count += 1
+            locked_until = now + _LOCKOUT_SECONDS if count >= _FAIL_LIMIT else 0.0
+            failures[address] = (0 if locked_until else count, locked_until, now)
+            if locked_until:
+                log.warning("console sign-in locked for %s after %s wrong passwords", address, count)
+            await asyncio.sleep(_FAIL_DELAY)
+            if locked_until:
+                return _json_error("Too many wrong passwords. Try again in 5 min.", 429)
+            return _json_error("Wrong password.", 401)
+        failures.pop(address, None)
+        token = _new_session(request.app["sessions"])
+    response = web.json_response({"ok": True})
+    response.set_cookie(_COOKIE, token, httponly=True, samesite="Lax", path="/", max_age=_SESSION_SECONDS)
+    return response
+
+
 async def handle_login(request: web.Request) -> web.Response:
     service: Service = request.app["service"]
     try:
@@ -120,33 +154,15 @@ async def handle_login(request: web.Request) -> web.Response:
         return _json_error("Expected JSON.")
     if not isinstance(body, dict):
         return _json_error("Expected a JSON object.")
-    failures: dict[str, tuple[int, float]] = request.app["login_failures"]
+    failures: dict[str, tuple[int, float, float]] = request.app["login_failures"]
     address = request.remote or "?"
+    _forget_old_failures(failures, time.monotonic())
     gate = _ADDRESS_LOCKS.setdefault(address, asyncio.Lock())
-    async with gate:
-        now = time.monotonic()
-        count, locked_until = failures.get(address, (0, 0.0))
-        if locked_until > now:
-            minutes = max(1, round((locked_until - now) / 60))
-            return _json_error(f"Too many wrong passwords. Try again in {minutes} min.", 429)
-        if not _password_ok(str(body.get("password") or ""), service.console_password):
-            count += 1
-            locked_until = now + _LOCKOUT_SECONDS if count >= _FAIL_LIMIT else 0.0
-            failures[address] = (0 if locked_until else count, locked_until)
-            if locked_until:
-                log.warning("console sign-in locked for %s after %s wrong passwords", address, count)
-            await asyncio.sleep(_FAIL_DELAY)
-            if locked_until:
-                return _json_error("Too many wrong passwords. Try again in 5 min.", 429)
-            return _json_error("Wrong password.", 401)
-        failures.pop(address, None)
-        for key, (_count, until) in list(failures.items()):
-            if until and until <= now:
-                del failures[key]
-        token = _new_session(request.app["sessions"])
-    response = web.json_response({"ok": True})
-    response.set_cookie(_COOKIE, token, httponly=True, samesite="Lax", path="/", max_age=_SESSION_SECONDS)
-    return response
+    try:
+        return await _check_login(request, service, body, failures, address, gate)
+    finally:
+        if address not in failures and not gate.locked() and not getattr(gate, "_waiters", None):
+            _ADDRESS_LOCKS.pop(address, None)
 
 
 async def handle_logout(request: web.Request) -> web.Response:

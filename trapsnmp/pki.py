@@ -28,6 +28,10 @@ from trapsnmp.settings import data_dir
 log = logging.getLogger("trapsnmp.pki")
 
 APP_URI = "urn:trapsnmp:gateway"
+# A one-year certificate expired while the gateway kept running, and clients
+# then refused secure connections until the next restart.
+CERT_DAYS = 15 * 365
+RENEW_DAYS = 30
 _NAME = re.compile(r"^[0-9A-Fa-f]{40}\.der$")
 
 PROFILES = (
@@ -58,7 +62,7 @@ class Pki:
             path.mkdir(parents=True, exist_ok=True)
         if store.key_file.is_file():
             os.chmod(store.key_file, 0o600)
-        if not store.key_file.is_file() or not store.cert_file.is_file() or store._expired():
+        if not store.key_file.is_file() or not store.cert_file.is_file() or store._renewal_due():
             if store.cert_file.is_file():
                 log.info("Replacing the OPC UA certificate at %s", store.cert_file)
             store._create()
@@ -83,7 +87,7 @@ class Pki:
             {"organizationName": "trapsnmp"},
             names,
             [ExtendedKeyUsageOID.SERVER_AUTH, ExtendedKeyUsageOID.CLIENT_AUTH],
-            days=365,
+            days=CERT_DAYS,
         )
         descriptor = os.open(self.key_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(descriptor, "wb") as handle:
@@ -94,16 +98,21 @@ class Pki:
             pass
         self.cert_file.write_bytes(certificate.public_bytes(Encoding.DER))
 
-    def _expired(self) -> bool:
-        if not self.cert_file.is_file():
-            return False
+    def days_left(self) -> int | None:
+        """Whole days until the application certificate expires, or None if unreadable."""
         try:
             expires = self.certificate().not_valid_after_utc
         except Exception:
-            return True
+            return None
         if expires.tzinfo is None:
             expires = expires.replace(tzinfo=timezone.utc)
-        return expires <= datetime.now(timezone.utc)
+        return (expires - datetime.now(timezone.utc)).days
+
+    def _renewal_due(self) -> bool:
+        if not self.cert_file.is_file():
+            return False
+        left = self.days_left()
+        return left is None or left <= RENEW_DAYS
 
     def certificate(self) -> x509.Certificate:
         return x509.load_der_x509_certificate(self.cert_file.read_bytes())

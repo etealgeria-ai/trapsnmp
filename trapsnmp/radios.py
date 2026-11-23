@@ -447,11 +447,16 @@ class OrbitMaster:
             try:
                 binds = await _walk(self._engine(), self.host, self.port, self.community)
                 self.remotes = rows_from_binds(binds)
+                if self.error:
+                    log.info("master poll recovered")
                 self.error = None
                 self.updated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
             except Exception as exc:
-                self.error = str(exc)[:300]
-                log.warning("master poll failed: %s", self.error)
+                error = str(exc)[:300]
+                if error != self.error:
+                    # Logged when the failure starts or changes, not every poll.
+                    log.warning("master poll failed: %s", error)
+                self.error = error
             finally:
                 self.polling = False
         await self._on_update(self.snapshot())

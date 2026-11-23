@@ -18,6 +18,7 @@ from trapsnmp.catalog import OID_RE, PRESETS, classify_trap, display_value, oid_
 from trapsnmp.radios import CONN_REM_COLUMNS, ENTRY, LINK_STATUS, MODULATION, OrbitMaster, slot_fields
 from trapsnmp.trap_tags import TrapTags
 from trapsnmp.opcua_out import NS_URI, REMOTE_TAG_COUNT, OpcuaBridge
+from trapsnmp.pki import RENEW_DAYS
 from trapsnmp.settings import ini_path, load as load_settings
 from trapsnmp.settings import save as save_settings
 from trapsnmp.snmp_in import SnmpTrapIn
@@ -116,6 +117,7 @@ class Service:
         self._remotes_dirty = False
         self._remote_save_task: asyncio.Task | None = None
         self._started = False
+        self._cert_task: asyncio.Task | None = None
         self.started_at = datetime.now(timezone.utc)
         self.console_password = "P@ssw0rd"
         load_settings(self)
@@ -194,6 +196,23 @@ class Service:
         elif self.agent.error:
             self._trace(f"SNMP agent failed: {self.agent.error}")
         self.radios._ensure_loop()
+        self._cert_task = spawn(self._watch_certificate(), name="certificate-watch")
+
+    async def _watch_certificate(self) -> None:
+        """Once a day, warn when the OPC UA certificate is close to expiring."""
+        while True:
+            pki = self.opc.pki
+            left = pki.days_left() if pki is not None else None
+            if left is not None and left <= RENEW_DAYS:
+                text = (
+                    f"OPC UA certificate expires in {left} days. "
+                    "Restart the gateway to renew it; clients must then trust the new certificate."
+                    if left >= 0
+                    else "OPC UA certificate has expired. Restart the gateway to renew it."
+                )
+                log.warning(text)
+                self._trace(text)
+            await asyncio.sleep(24 * 60 * 60)
 
     def radio_view(self) -> dict:
         snap = self.radios.snapshot()
@@ -652,6 +671,8 @@ class Service:
                 published["written"] = int(published.get("written") or 0) + written
             except Exception:
                 log.exception("trap tag update failed")
+            if self.tags.limited_last:
+                extra += ", trap tag limit reached"
         else:
             extra += ", kept off the trap tags"
         who = public["user"] if public["version"] == "v3" else (public["community"] or "—")
