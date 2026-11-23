@@ -200,6 +200,7 @@ def save(service) -> None:
             "community": dest.get("community", "public"),
             "version": dest.get("version", "2c"),
         }
+    parser["console"] = {"password": getattr(service, "console_password", "") or "P@ssw0rd"}
     parser["sine"] = {"enabled": "true" if service._sine_on else "false"}
     for name, password in service.opc.users.passwords.items():
         parser[f"opc.user.{name}"] = {"password": password}
@@ -331,6 +332,11 @@ def _apply(service, parser: configparser.ConfigParser) -> None:
         )
     if numbered:
         service.agent.destinations = destinations
+    if parser.has_section("console"):
+        password = parser["console"].get("password", "")
+        if password:
+            service.console_password = password
+            service._console_from_file = True
     # A [sine] section from an older file is ignored. The RSSI sine starts
     # stopped and is started from the Send page.
     opc_users: dict[str, str] = {}

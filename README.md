@@ -42,4 +42,6 @@ A username token is offered as well. On the open endpoint the password is encryp
 
 Communities, SNMPv3 users, the GE master, the agent, tag filters, upstream OPC UA, OPC UA users, and the last remote values are stored in `data/trapsnmp.ini` and loaded on the next start. The file is mode `0600`. Set `TRAPSNMP_DATA` to choose that folder. Otherwise an existing `/workspace/data` is used, then `./data`. The private key is not written into that file.
 
+The console asks for the password in `[console]` of `data/trapsnmp.ini`. Until you change that line, the password is `P@ssw0rd`.
+
 The RSSI sine stays stopped at startup. Start it from the Send page. Each step is 10 seconds.

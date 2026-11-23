@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
+import secrets
 from html import escape
 from pathlib import Path
 
@@ -15,6 +18,7 @@ log = logging.getLogger("trapsnmp.web")
 
 STATIC = Path(__file__).resolve().parent / "static"
 INDEX = (STATIC / "index.html").read_text(encoding="utf-8")
+_COOKIE = "trapsnmp"
 
 
 def _preset_buttons(items) -> str:
@@ -57,6 +61,57 @@ async def _json_posts(request: web.Request, handler):
     if request.method == "POST" and request.content_type != "application/json":
         return _json_error("Send JSON with Content-Type: application/json.", 415)
     return await handler(request)
+
+
+def _password_ok(got: str, expected: str) -> bool:
+    return hmac.compare_digest(
+        hashlib.sha256(got.encode("utf-8")).digest(),
+        hashlib.sha256(expected.encode("utf-8")).digest(),
+    )
+
+
+def _open_path(request: web.Request) -> bool:
+    if request.method == "GET" and (
+        request.path in ("/", "/favicon.svg") or request.path.startswith("/static/")
+    ):
+        return True
+    return request.method == "POST" and request.path == "/api/login"
+
+
+@web.middleware
+async def _require_login(request: web.Request, handler):
+    if _open_path(request):
+        return await handler(request)
+    token = request.cookies.get(_COOKIE, "")
+    sessions: set[str] = request.app["sessions"]
+    if token and token in sessions:
+        return await handler(request)
+    return _json_error("Sign in required.", 401)
+
+
+async def handle_login(request: web.Request) -> web.Response:
+    service: Service = request.app["service"]
+    try:
+        body = await request.json()
+    except Exception:
+        return _json_error("Expected JSON.")
+    if not isinstance(body, dict):
+        return _json_error("Expected a JSON object.")
+    if not _password_ok(str(body.get("password") or ""), service.console_password):
+        return _json_error("Wrong password.", 401)
+    token = secrets.token_urlsafe(32)
+    request.app["sessions"].add(token)
+    response = web.json_response({"ok": True})
+    response.set_cookie(_COOKIE, token, httponly=True, samesite="Lax", path="/", max_age=12 * 60 * 60)
+    return response
+
+
+async def handle_logout(request: web.Request) -> web.Response:
+    token = request.cookies.get(_COOKIE, "")
+    request.app["sessions"].discard(token)
+    response = web.json_response({"ok": True})
+    response.del_cookie(_COOKIE, path="/")
+    return response
 
 
 async def handle_index(_request: web.Request) -> web.Response:
@@ -316,10 +371,13 @@ def _optional_str(value) -> str | None:
 
 
 async def serve(service: Service) -> None:
-    app = web.Application(client_max_size=1024 * 256, middlewares=[_json_posts])
+    app = web.Application(client_max_size=1024 * 256, middlewares=[_json_posts, _require_login])
     app["service"] = service
+    app["sessions"] = set()
     app.router.add_get("/", handle_index)
     app.router.add_get("/favicon.svg", handle_favicon)
+    app.router.add_post("/api/login", handle_login)
+    app.router.add_post("/api/logout", handle_logout)
     app.router.add_get("/api/state", handle_state)
     app.router.add_get("/api/opc", handle_opc)
     app.router.add_post("/api/pki", handle_pki)

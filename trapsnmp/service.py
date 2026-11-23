@@ -118,8 +118,11 @@ class Service:
         self._remote_save_task: asyncio.Task | None = None
         self._started = False
         self.started_at = datetime.now(timezone.utc)
+        self.console_password = "P@ssw0rd"
         load_settings(self)
         self.radios.on_save = self.persist
+        if not getattr(self, "_console_from_file", False):
+            self.persist()
         if self._sine_on:
             self._sine_on = False
             self.persist()

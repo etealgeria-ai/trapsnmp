@@ -26,6 +26,7 @@
       <p class="status" id="status">
         <span class="dot" id="status-dot"></span>
         <span id="status-text">Opening the trap receiver</span>
+        <button type="button" class="text-btn" id="sign-out">Sign out</button>
       </p>
     </header>
 
@@ -596,6 +597,18 @@
         </div>
         <div id="diag-report"></div>
       </section>
+    </div>
+    <div id="login" class="login" hidden>
+      <form id="login-form" class="login-card">
+        <p class="eyebrow">trapsnmp</p>
+        <h2>Sign in</h2>
+        <label class="field">
+          <span>Password</span>
+          <input type="password" name="password" autocomplete="current-password" required />
+        </label>
+        <button type="submit" class="primary">Sign in</button>
+        <p class="note" id="login-error"></p>
+      </form>
     </div>
     <script src="/static/app.js"></script>
   </body>

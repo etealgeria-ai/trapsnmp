@@ -27,12 +27,29 @@ function ago(iso) {
 
 let ticking = false;
 
+function showLogin(message) {
+  const panel = document.getElementById("login");
+  if (panel) panel.hidden = false;
+  const err = document.getElementById("login-error");
+  if (err) err.textContent = message || "";
+}
+
+function hideLogin() {
+  const panel = document.getElementById("login");
+  if (panel) panel.hidden = true;
+}
+
 async function tick() {
   if (ticking) return;
   ticking = true;
   try {
     const response = await fetch("/api/state");
+    if (response.status === 401) {
+      showLogin();
+      return;
+    }
     if (!response.ok) throw new Error("status");
+    hideLogin();
     render(await response.json());
   } catch (_err) {
     const text = document.getElementById("status-text");
@@ -1000,3 +1017,29 @@ document.getElementById("run-diag").addEventListener("click", async () => {
 
 tick();
 setInterval(tick, 1000);
+
+document.getElementById("login-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const response = await fetch("/api/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password: form.elements.password.value }),
+  });
+  if (!response.ok) {
+    showLogin("Wrong password.");
+    return;
+  }
+  form.reset();
+  hideLogin();
+  await tick();
+});
+
+document.getElementById("sign-out")?.addEventListener("click", async () => {
+  await fetch("/api/logout", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  showLogin();
+});
