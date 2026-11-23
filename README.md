@@ -15,7 +15,7 @@ pip install -r requirements.txt
 python -m trapsnmp
 ```
 
-- Console: `http://127.0.0.1:8080/`
+- Console: `http://127.0.0.1:8080/` — sign in with password `P@ssw0rd`
 - SNMP traps: UDP 162, or 1162 if 162 is unavailable
 - OPC UA: `opc.tcp://127.0.0.1:4840/trapsnmp/`
 - Namespace: `urn:trapsnmp:snmp`
@@ -42,6 +42,6 @@ A username token is offered as well. On the open endpoint the password is encryp
 
 Communities, SNMPv3 users, the GE master, the agent, tag filters, upstream OPC UA, OPC UA users, and the last remote values are stored in `data/trapsnmp.ini` and loaded on the next start. The file is mode `0600`. Set `TRAPSNMP_DATA` to choose that folder. Otherwise an existing `/workspace/data` is used, then `./data`. The private key is not written into that file.
 
-The console asks for the password in `[console]` of `data/trapsnmp.ini`. Until you change that line, the password is `P@ssw0rd`.
+The console password is `P@ssw0rd`. It is stored in `[console]` of `data/trapsnmp.ini`. Use `P@ssw0rd` to sign in. Edit that line and restart only if you want a different password. Ten wrong passwords from one address lock it out for 5 minutes, and a sign-in lasts 12 hours. The console is plain HTTP, so use it on a trusted network or behind an HTTPS proxy.
 
 The RSSI sine stays stopped at startup. Start it from the Send page. Each step is 10 seconds.

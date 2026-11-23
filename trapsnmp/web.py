@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import logging
 import secrets
+import time
 from html import escape
 from pathlib import Path
 
@@ -19,6 +21,12 @@ log = logging.getLogger("trapsnmp.web")
 STATIC = Path(__file__).resolve().parent / "static"
 INDEX = (STATIC / "index.html").read_text(encoding="utf-8")
 _COOKIE = "trapsnmp"
+_SESSION_SECONDS = 12 * 60 * 60
+_MAX_SESSIONS = 100
+_FAIL_DELAY = 1.0
+_FAIL_LIMIT = 10
+_LOCKOUT_SECONDS = 5 * 60
+_ADDRESS_LOCKS: dict[str, asyncio.Lock] = {}
 
 
 def _preset_buttons(items) -> str:
@@ -78,14 +86,29 @@ def _open_path(request: web.Request) -> bool:
     return request.method == "POST" and request.path == "/api/login"
 
 
+def _new_session(sessions: dict[str, float]) -> str:
+    now = time.monotonic()
+    for token, expires in list(sessions.items()):
+        if expires <= now:
+            del sessions[token]
+    while len(sessions) >= _MAX_SESSIONS:
+        del sessions[min(sessions, key=sessions.get)]
+    token = secrets.token_urlsafe(32)
+    sessions[token] = now + _SESSION_SECONDS
+    return token
+
+
 @web.middleware
 async def _require_login(request: web.Request, handler):
     if _open_path(request):
         return await handler(request)
     token = request.cookies.get(_COOKIE, "")
-    sessions: set[str] = request.app["sessions"]
-    if token and token in sessions:
+    sessions: dict[str, float] = request.app["sessions"]
+    expires = sessions.get(token) if token else None
+    if expires is not None and expires > time.monotonic():
         return await handler(request)
+    if expires is not None:
+        sessions.pop(token, None)
     return _json_error("Sign in required.", 401)
 
 
@@ -97,18 +120,38 @@ async def handle_login(request: web.Request) -> web.Response:
         return _json_error("Expected JSON.")
     if not isinstance(body, dict):
         return _json_error("Expected a JSON object.")
-    if not _password_ok(str(body.get("password") or ""), service.console_password):
-        return _json_error("Wrong password.", 401)
-    token = secrets.token_urlsafe(32)
-    request.app["sessions"].add(token)
+    failures: dict[str, tuple[int, float]] = request.app["login_failures"]
+    address = request.remote or "?"
+    gate = _ADDRESS_LOCKS.setdefault(address, asyncio.Lock())
+    async with gate:
+        now = time.monotonic()
+        count, locked_until = failures.get(address, (0, 0.0))
+        if locked_until > now:
+            minutes = max(1, round((locked_until - now) / 60))
+            return _json_error(f"Too many wrong passwords. Try again in {minutes} min.", 429)
+        if not _password_ok(str(body.get("password") or ""), service.console_password):
+            count += 1
+            locked_until = now + _LOCKOUT_SECONDS if count >= _FAIL_LIMIT else 0.0
+            failures[address] = (0 if locked_until else count, locked_until)
+            if locked_until:
+                log.warning("console sign-in locked for %s after %s wrong passwords", address, count)
+            await asyncio.sleep(_FAIL_DELAY)
+            if locked_until:
+                return _json_error("Too many wrong passwords. Try again in 5 min.", 429)
+            return _json_error("Wrong password.", 401)
+        failures.pop(address, None)
+        for key, (_count, until) in list(failures.items()):
+            if until and until <= now:
+                del failures[key]
+        token = _new_session(request.app["sessions"])
     response = web.json_response({"ok": True})
-    response.set_cookie(_COOKIE, token, httponly=True, samesite="Lax", path="/", max_age=12 * 60 * 60)
+    response.set_cookie(_COOKIE, token, httponly=True, samesite="Lax", path="/", max_age=_SESSION_SECONDS)
     return response
 
 
 async def handle_logout(request: web.Request) -> web.Response:
     token = request.cookies.get(_COOKIE, "")
-    request.app["sessions"].discard(token)
+    request.app["sessions"].pop(token, None)
     response = web.json_response({"ok": True})
     response.del_cookie(_COOKIE, path="/")
     return response
@@ -373,7 +416,8 @@ def _optional_str(value) -> str | None:
 async def serve(service: Service) -> None:
     app = web.Application(client_max_size=1024 * 256, middlewares=[_json_posts, _require_login])
     app["service"] = service
-    app["sessions"] = set()
+    app["sessions"] = {}
+    app["login_failures"] = {}
     app.router.add_get("/", handle_index)
     app.router.add_get("/favicon.svg", handle_favicon)
     app.router.add_post("/api/login", handle_login)

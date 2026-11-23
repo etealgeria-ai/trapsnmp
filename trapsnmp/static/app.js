@@ -45,6 +45,10 @@ async function tick() {
   try {
     const response = await fetch("/api/state");
     if (response.status === 401) {
+      if (window.__trapsnmp) {
+        window.location.reload();
+        return;
+      }
       showLogin();
       return;
     }
@@ -1026,8 +1030,9 @@ document.getElementById("login-form")?.addEventListener("submit", async (event) 
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ password: form.elements.password.value }),
   });
+  const body = await response.json().catch(() => ({}));
   if (!response.ok) {
-    showLogin("Wrong password.");
+    showLogin(body.error || "Wrong password.");
     return;
   }
   form.reset();
@@ -1041,5 +1046,5 @@ document.getElementById("sign-out")?.addEventListener("click", async () => {
     headers: { "Content-Type": "application/json" },
     body: "{}",
   });
-  showLogin();
+  window.location.reload();
 });
