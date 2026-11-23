@@ -10,6 +10,7 @@ from pathlib import Path
 
 from trapsnmp.agent import COMPARISONS
 from trapsnmp.radios import _MAX_REMOTES
+from trapsnmp.snmp_in import _clean_user
 
 log = logging.getLogger("trapsnmp.settings")
 
@@ -109,8 +110,12 @@ def load(service) -> None:
     try:
         if ini_path().exists():
             parser = _parser()
-            parser.read(ini_path(), encoding="utf-8")
-            _apply(service, parser)
+            try:
+                parser.read(ini_path(), encoding="utf-8")
+            except (configparser.Error, UnicodeDecodeError) as exc:
+                _set_aside(service, exc)
+            else:
+                _apply(service, parser)
         else:
             _migrate_master(service)
     finally:
@@ -125,6 +130,22 @@ def load(service) -> None:
             save(service)
         except OSError:
             log.exception("Could not create %s", ini_path())
+
+
+def _set_aside(service, exc: Exception) -> None:
+    """Keep a file that cannot be read as trapsnmp.ini.bad and start with defaults."""
+    path = ini_path()
+    broken = path.with_name(path.name + ".bad")
+    try:
+        os.replace(path, broken)
+        where = f"; it was kept as {broken}"
+    except OSError:
+        where = ""
+    message = f"Could not read {path} ({exc.__class__.__name__}){where}. Started with defaults."
+    log.error("%s %s", message, exc)
+    trace = getattr(service, "_trace", None)
+    if callable(trace):
+        trace(message)
 
 
 def save(service) -> None:
@@ -240,6 +261,14 @@ def _apply(service, parser: configparser.ConfigParser) -> None:
                 "privKey": item.get("priv_key", ""),
             }
         )
+    valid = []
+    for profile in users:
+        try:
+            valid.append(_clean_user(profile))
+        except (KeyError, ValueError) as exc:
+            # One bad user used to stop the whole trap receiver at start.
+            log.warning("Skipping SNMPv3 user %r in %s: %s", profile.get("name"), ini_path(), exc)
+    users = valid
     if users:
         service.snmp.users = users
     if parser.has_section("master"):

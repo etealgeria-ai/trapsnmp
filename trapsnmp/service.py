@@ -69,6 +69,9 @@ _SINE_AMPLITUDE = 15
 _SINE_PERIOD = 30.0
 _SINE_EVERY = 10.0
 _SINE_SPREAD = 8
+# Before each sine trap, wait while the receive backlog is at least half full,
+# so the simulation never crowds out traps from real devices.
+_SINE_BACKLOG_WAIT = 5.0
 _LINK_NUM = {name: number for number, name in LINK_STATUS.items()}
 _MOD_NUM = {name: number for number, name in MODULATION.items()}
 _MOD_NAMES = ("qpsk", "qam16", "qam64", "fsk9600")
@@ -298,7 +301,11 @@ class Service:
                     **stats,
                 }
             )
+        loop = asyncio.get_running_loop()
         for row in rows:
+            give_up = loop.time() + _SINE_BACKLOG_WAIT
+            while self.snmp.in_flight >= self.snmp.max_in_flight // 2 and loop.time() < give_up:
+                await asyncio.sleep(0.01)
             try:
                 await self.snmp.send(
                     community="public",
@@ -336,6 +343,7 @@ class Service:
                 "users": [dict(item) for item in self.snmp.users],
                 "error": self.snmp.error,
                 "dropped": self.snmp.dropped,
+                "rejected": self.snmp.rejected(),
             },
             "opcua": {
                 "ready": self.opc.ready,

@@ -41,6 +41,15 @@ log = logging.getLogger("trapsnmp.snmp")
 
 _MAX_IN_FLIGHT = 64
 
+# pysnmp counts messages it rejects before they become traps.
+_REJECT_COUNTERS = (
+    ("__SNMPv2-MIB", "snmpInBadCommunityNames", "badCommunity"),
+    ("__SNMP-USER-BASED-SM-MIB", "usmStatsUnknownUserNames", "unknownUser"),
+    ("__SNMP-USER-BASED-SM-MIB", "usmStatsWrongDigests", "wrongAuth"),
+    ("__SNMP-USER-BASED-SM-MIB", "usmStatsDecryptionErrors", "wrongPriv"),
+    ("__SNMP-USER-BASED-SM-MIB", "usmStatsUnsupportedSecLevels", "wrongLevel"),
+)
+
 OnTrap = Callable[[dict, list[tuple[str, str, str]]], Awaitable[None]]
 
 VALUE_TYPES = {
@@ -333,6 +342,31 @@ class SnmpTrapIn:
 
     def _release_trap(self, _task: asyncio.Task) -> None:
         self._inflight = max(0, self._inflight - 1)
+
+    @property
+    def in_flight(self) -> int:
+        return self._inflight
+
+    @property
+    def max_in_flight(self) -> int:
+        return _MAX_IN_FLIGHT
+
+    def rejected(self) -> dict[str, int]:
+        """Messages refused for a bad community or SNMPv3 credentials."""
+        counts: dict[str, int] = {}
+        if self._engine is None:
+            return counts
+        try:
+            builder = self._engine.getMibBuilder()
+        except Exception:
+            return counts
+        for module, symbol, key in _REJECT_COUNTERS:
+            try:
+                (node,) = builder.importSymbols(module, symbol)
+                counts[key] = int(node.syntax)
+            except Exception:
+                continue
+        return counts
 
     async def _dispatch(self, snap: dict, rows: list[tuple[str, str, str]]) -> None:
         try:

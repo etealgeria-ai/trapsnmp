@@ -189,11 +189,22 @@ function renderDiag(data) {
   const upstream = data.upstream || {};
   const users = (snmp.users || []).map((user) => `${user.name} ${user.level}`).join(", ");
   const last = (data.traps || [])[0];
+  const dropped = Number(snmp.dropped || 0);
+  const rejected = snmp.rejected || {};
+  const count = (key) => Number(rejected[key] || 0);
+  const losses = [
+    [dropped, "over the backlog"],
+    [count("badCommunity"), "bad community"],
+    [count("unknownUser"), "unknown v3 user"],
+    [count("wrongAuth") + count("wrongPriv"), "wrong v3 passphrase"],
+    [count("wrongLevel"), "wrong v3 security level"],
+  ].filter(([n]) => n > 0);
   const rows = [
     check(snmp.listening, "SNMP socket", snmp.listening ? `UDP ${snmp.port}` : (snmp.error || "Not listening")),
     check(snmp.port === 162 ? "pass" : "warn", "UDP port", snmp.port === 162 ? "162" : (snmp.note || `Using ${snmp.port || "—"}`)),
     check((snmp.communities || []).length > 0, "Communities", (snmp.communities || []).join(", ") || "None"),
     check((snmp.users || []).length > 0, "SNMPv3", users || "No user"),
+    check(losses.length ? "warn" : "pass", "Lost traps", losses.length ? losses.map(([n, why]) => `${n} ${why}`).join(" · ") : "None dropped or rejected"),
     check(opc.ready, "OPC UA server", opc.ready ? `${opc.endpoint} · ${opc.security}` : (opc.error || "Starting")),
     check(data.agent?.listening, "SNMP agent", data.agent?.listening ? `UDP ${data.agent.port} · ${data.agent.objectId}` : (data.agent?.error || "Not listening")),
     check(readback.ok, "Client read", readback.ok ? "Latest read succeeded" : (readback.error || "No read")),
