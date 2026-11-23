@@ -61,13 +61,6 @@ def _received_trap_oid(trap_oid: str, version: str) -> str:
     return ".".join([*enterprise, "0", parts[-1]])
 
 
-def _trap_matches(expected: str, record: dict) -> bool:
-    received = str(record.get("trapOid") or "").lstrip(".")
-    expected = str(expected or "").lstrip(".")
-    version = str(record.get("version") or "")
-    wire = {"v1": "1", "v2c": "2c", "v3": "3"}.get(version, version)
-    return bool(expected) and received == _received_trap_oid(expected, wire)
-
 _OID = re.compile(OID_RE)
 _MAX_BINDS = 32
 _MAX_VALUE = 512
@@ -342,6 +335,7 @@ class Service:
                 "communities": list(self.snmp.communities),
                 "users": [dict(item) for item in self.snmp.users],
                 "error": self.snmp.error,
+                "dropped": self.snmp.dropped,
             },
             "opcua": {
                 "ready": self.opc.ready,
@@ -388,8 +382,15 @@ class Service:
         started = datetime.now(timezone.utc)
         steps: list[dict] = []
 
-        def step(name: str, ok: bool, detail: str) -> None:
-            steps.append({"name": name, "ok": bool(ok), "detail": detail})
+        def step(name: str, ok: bool, detail: str, *, skipped: bool = False) -> None:
+            steps.append(
+                {
+                    "name": name,
+                    "ok": True if skipped else bool(ok),
+                    "skipped": skipped,
+                    "detail": detail,
+                }
+            )
 
         step(
             "SNMP socket",
@@ -452,7 +453,16 @@ class Service:
                 )
         else:
             step("SNMP agent", False, self.agent.error or "Not listening")
-        if self.opc.ready:
+        if self.opc.ready and (self.tags.community or self.tags.device_ip):
+            parts = []
+            if self.tags.community:
+                parts.append(f"community {self.tags.community}")
+            if self.tags.device_ip:
+                parts.append(f"device {self.tags.device_ip}")
+            detail = "Skipped. The Tags filter is " + " and ".join(parts) + "."
+            step("Trap tag", True, detail, skipped=True)
+            step("Events queue", True, detail, skipped=True)
+        elif self.opc.ready:
             try:
                 latched = await self.opc.read_tag("TRAP_V2C:.1.3.6.1.6.3.1.1.5.2")
                 queued = await self.opc.read_tag("EVENTS_001")

@@ -107,15 +107,20 @@ def _int(value: str | None, default: int) -> int:
 def load(service) -> None:
     service._loading = True
     try:
-        if not ini_path().exists():
+        if ini_path().exists():
+            parser = _parser()
+            parser.read(ini_path(), encoding="utf-8")
+            _apply(service, parser)
+        else:
             _migrate_master(service)
-            return
-        parser = _parser()
-        parser.read(ini_path(), encoding="utf-8")
-        _apply(service, parser)
     finally:
         service._loading = False
-    if not ini_path().exists():
+    if ini_path().is_file():
+        try:
+            os.chmod(ini_path(), 0o600)
+        except OSError:
+            log.warning("Could not restrict permissions on %s", ini_path())
+    else:
         try:
             save(service)
         except OSError:
@@ -192,12 +197,15 @@ def save(service) -> None:
     path = ini_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".ini.tmp")
-    with temporary.open("w", encoding="utf-8") as handle:
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
         handle.write("; trapsnmp settings. Loaded automatically on the next start.\n")
         parser.write(handle)
         handle.flush()
         os.fsync(handle.fileno())
+    os.chmod(temporary, 0o600)
     os.replace(temporary, path)
+    os.chmod(path, 0o600)
 
 
 def _migrate_master(service) -> None:

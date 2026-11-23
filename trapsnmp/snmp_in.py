@@ -39,6 +39,8 @@ from trapsnmp.tasks import spawn
 
 log = logging.getLogger("trapsnmp.snmp")
 
+_MAX_IN_FLIGHT = 64
+
 OnTrap = Callable[[dict, list[tuple[str, str, str]]], Awaitable[None]]
 
 VALUE_TYPES = {
@@ -112,6 +114,8 @@ class SnmpTrapIn:
         self._sender: SnmpEngine | None = None
         self._sink: dict = {}
         self._send_lock = asyncio.Lock()
+        self._inflight = 0
+        self.dropped = 0
 
     async def start(self, ports: tuple[int, ...] = (162, 1162)) -> None:
         try:
@@ -312,10 +316,23 @@ class SnmpTrapIn:
             "user": sink.get("user", ""),
             "securityLevel": sink.get("securityLevel", ""),
         }
+        if self._inflight >= _MAX_IN_FLIGHT:
+            self.dropped += 1
+            if self.dropped == 1 or self.dropped % 100 == 0:
+                log.warning("trap backlog is full; dropped %s", self.dropped)
+            return
+        self._inflight += 1
         try:
-            spawn(self._dispatch(snap, rows), name="trap-dispatch")
+            task = spawn(self._dispatch(snap, rows), name="trap-dispatch")
         except RuntimeError:
+            self._inflight -= 1
+            self.dropped += 1
             log.exception("trap dropped; no running loop")
+            return
+        task.add_done_callback(self._release_trap)
+
+    def _release_trap(self, _task: asyncio.Task) -> None:
+        self._inflight = max(0, self._inflight - 1)
 
     async def _dispatch(self, snap: dict, rows: list[tuple[str, str, str]]) -> None:
         try:

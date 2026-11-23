@@ -243,13 +243,17 @@ function renderReport(report) {
   const steps = report.steps || [];
   host.innerHTML = `
     <h3 class="subhead">Last loopback · ${esc(report.ms)} ms</h3>
-    <div class="checks">${steps.map((step) => `
+    <div class="checks">${steps.map((step) => {
+      const skipped = !!step.skipped;
+      const state = skipped ? "warn" : step.ok ? "pass" : "fail";
+      const label = skipped ? "Skip" : step.ok ? "Pass" : "Fail";
+      return `
       <div class="check">
-        <span class="check-state ${step.ok ? "pass" : "fail"}">${step.ok ? "Pass" : "Fail"}</span>
+        <span class="check-state ${state}">${label}</span>
         <span class="check-name">${esc(step.name)}</span>
         <span class="check-detail">${esc(step.detail)}</span>
-      </div>
-    `).join("")}</div>
+      </div>`;
+    }).join("")}</div>
   `;
 }
 

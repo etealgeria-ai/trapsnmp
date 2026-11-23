@@ -28,9 +28,9 @@ The built-in SNMP agent answers Get, GetNext, GetBulk, and Set on UDP 1161, and 
 
 ## GE Orbit radios
 
-The Radios page polls a GE Orbit LN master (`mIfLnStatusConnRemTable`) and writes each connected radio into `Remote1` through `Remote999`. Every remote has the short tags (`remote_mac`, `remote_ip`, `rssi`, `down`, `if_index`) plus one tag per column of `mIfLnStatusConnRemEntry` in MDS-IF-LN-MIB. The master IP, community, port, and poll interval are set on the Config page.
+The Radios page polls a GE Orbit LN master (`mIfLnStatusConnRemTable`) and writes each connected radio into `Remote1` through `Remote255`. Every remote has the short tags (`remote_mac`, `remote_ip`, `rssi`, `down`, `if_index`) plus one tag per column of `mIfLnStatusConnRemEntry` in MDS-IF-LN-MIB. The master IP, community, port, and poll interval are set on the Config page.
 
-The Send page can simulate those columns for Remote1 through Remote255 on one RSSI sine wave, with a random offset per remote.
+The Send page can simulate those columns for Remote1 through Remote255 on one RSSI sine wave, with a random offset per remote. The wave period is 30 seconds and the step is 10 seconds. It stays stopped until you start it.
 
 ## OPC UA security
 
@@ -40,6 +40,6 @@ A username token is offered as well. On the open endpoint the password is encryp
 
 ## Settings
 
-Communities, SNMPv3 users, the GE master, the agent, tag filters, upstream OPC UA, OPC UA users, and the last remote values are stored in `data/trapsnmp.ini` and loaded on the next start. Set `TRAPSNMP_DATA` to choose that folder. Otherwise an existing `/workspace/data` is used, then `./data`. The private key is not written into that file.
+Communities, SNMPv3 users, the GE master, the agent, tag filters, upstream OPC UA, OPC UA users, and the last remote values are stored in `data/trapsnmp.ini` and loaded on the next start. The file is mode `0600`. Set `TRAPSNMP_DATA` to choose that folder. Otherwise an existing `/workspace/data` is used, then `./data`. The private key is not written into that file.
 
-The RSSI sine stays stopped at startup. Start it from the Send page.
+The RSSI sine stays stopped at startup. Start it from the Send page. Each step is 10 seconds.
