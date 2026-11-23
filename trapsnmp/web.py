@@ -50,6 +50,13 @@ def _json_error(message: str, status: int = 400) -> web.Response:
     return web.json_response({"ok": False, "error": message}, status=status)
 
 
+@web.middleware
+async def _json_posts(request: web.Request, handler):
+    if request.method == "POST" and "application/json" not in request.content_type:
+        return _json_error("Expected JSON.", 415)
+    return await handler(request)
+
+
 async def handle_index(_request: web.Request) -> web.Response:
     return web.Response(
         text=PAGE,
@@ -108,7 +115,9 @@ async def handle_favicon(_request: web.Request) -> web.Response:
 
 async def handle_state(request: web.Request) -> web.Response:
     service: Service = request.app["service"]
-    return web.json_response(await service.snapshot())
+    response = web.json_response(await service.snapshot())
+    response.enable_compression()
+    return response
 
 
 async def handle_inject(request: web.Request) -> web.Response:
@@ -305,7 +314,7 @@ def _optional_str(value) -> str | None:
 
 
 async def serve(service: Service) -> None:
-    app = web.Application(client_max_size=1024 * 256)
+    app = web.Application(client_max_size=1024 * 256, middlewares=[_json_posts])
     app["service"] = service
     app.router.add_get("/", handle_index)
     app.router.add_get("/favicon.svg", handle_favicon)

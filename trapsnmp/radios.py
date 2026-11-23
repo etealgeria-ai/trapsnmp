@@ -28,7 +28,7 @@ log = logging.getLogger("trapsnmp.radios")
 
 ENTRY = "1.3.6.1.4.1.4130.10.2.5.1.2.2.1"
 _HOST = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.\-]{0,252}$")
-_MAX_REMOTES = 256
+_MAX_REMOTES = 255
 
 # Names and numbers are from MDS-IF-LN-MIB (May 16, 2018).
 LINK_STATUS = {
@@ -358,6 +358,7 @@ class OrbitMaster:
         self._on_update = on_update
         self.on_save = None
         self._task: asyncio.Task | None = None
+        self._snmp = None
         self._lock = asyncio.Lock()
 
     def _save(self) -> None:
@@ -417,7 +418,13 @@ class OrbitMaster:
 
     async def _loop(self) -> None:
         while self.enabled:
-            await self.poll()
+            try:
+                await self.poll()
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:
+                self.error = str(exc)[:300]
+                log.exception("radio poll loop failed")
             try:
                 await asyncio.sleep(self.interval)
             except asyncio.CancelledError:
@@ -427,7 +434,7 @@ class OrbitMaster:
         async with self._lock:
             self.polling = True
             try:
-                binds = await _walk(self.host, self.port, self.community)
+                binds = await _walk(self._engine(), self.host, self.port, self.community)
                 self.remotes = rows_from_binds(binds)
                 self.error = None
                 self.updated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -439,9 +446,13 @@ class OrbitMaster:
         await self._on_update(self.snapshot())
         return self.remotes
 
+    def _engine(self):
+        if self._snmp is None:
+            self._snmp = SnmpEngine()
+        return self._snmp
 
-async def _walk(host: str, port: int, community: str) -> list[tuple[str, object]]:
-    engine = SnmpEngine()
+
+async def _walk(engine, host: str, port: int, community: str) -> list[tuple[str, object]]:
     target = UdpTransportTarget((host, port), timeout=2, retries=1)
     auth = CommunityData(community, mpModel=1)
     context = ContextData()

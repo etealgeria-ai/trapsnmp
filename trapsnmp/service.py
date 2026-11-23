@@ -16,9 +16,9 @@ from trapsnmp import __version__
 from trapsnmp.agent import SnmpAgent
 from trapsnmp.catalog import OID_RE, PRESETS, classify_trap, display_value, oid_name
 from trapsnmp.radios import CONN_REM_COLUMNS, ENTRY, LINK_STATUS, MODULATION, OrbitMaster, slot_fields
-from trapsnmp.trap_tags import TrapTags
+from trapsnmp.trap_tags import TrapTags, v1_identity
 from trapsnmp.opcua_out import NS_URI, REMOTE_TAG_COUNT, OpcuaBridge
-from trapsnmp.settings import INI_PATH, load as load_settings
+from trapsnmp.settings import ini_path, load as load_settings
 from trapsnmp.settings import save as save_settings
 from trapsnmp.snmp_in import SnmpTrapIn
 
@@ -42,6 +42,20 @@ def _remote_varbinds(row: dict) -> list[tuple[str, str, str]]:
             kind_name, text = "string", "" if value is None else str(value)
         binds.append((f"{_REM}.{column}.{index}", kind_name, text))
     return binds
+
+
+def _trap_matches(expected: str, record: dict) -> bool:
+    received = str(record.get("trapOid") or "").lstrip(".")
+    expected = str(expected or "").lstrip(".")
+    if not expected or received == expected:
+        return bool(expected) and received == expected
+    if str(record.get("version") or "") != "v1":
+        return False
+    generic, specific, enterprise = v1_identity(received)
+    enterprise = enterprise.lstrip(".")
+    if expected in (enterprise, f"{enterprise}.0.{specific}"):
+        return True
+    return generic < 6 and expected == f"1.3.6.1.6.3.1.1.5.{generic + 1}"
 
 _OID = re.compile(OID_RE)
 _MAX_BINDS = 32
@@ -92,14 +106,21 @@ class Service:
         self._sine_rssi: int | None = None
         self._sine_down: int | None = None
         self._sine_stats: dict[int, dict[str, int]] = {}
-        self._loading = False
+        self._remotes_saved_at = 0.0
         self._started = False
         self.started_at = datetime.now(timezone.utc)
         load_settings(self)
         self.radios.on_save = self.persist
+        if self._sine_on:
+            self._sine_on = False
+            self.persist()
 
-    def persist(self) -> None:
+    def persist(self, *, remotes_only: bool = False) -> None:
+        now = time.monotonic()
+        if remotes_only and now - self._remotes_saved_at < 60:
+            return
         save_settings(self)
+        self._remotes_saved_at = now
 
     async def start(self) -> None:
         if self._started:
@@ -127,10 +148,8 @@ class Service:
             self._trace(f"OPC UA server failed: {self.opc.error}")
         if self.radios.remotes and self.opc.ready:
             await self.opc.write_rssi_wave(self.radios.remotes)
-        if INI_PATH.exists():
-            self._trace(f"Loaded settings from {INI_PATH}")
-        if self._sine_on:
-            self.set_sine(True)
+        if ini_path().exists():
+            self._trace(f"Loaded settings from {ini_path()}")
         if self.agent.listening:
             self._trace(
                 f"SNMP agent on UDP {self.agent.port} at {self.agent.object_id()}"
@@ -149,8 +168,11 @@ class Service:
             node = f"ns={index};s=Remote{slot}" if index else f"Remote{slot}"
             if row is not None:
                 row["rssiNode"] = f"{node}.rssi"
-            slots.append({"tag": f"Remote{slot}", "node": node, **slot_fields(row)})
+            fields = slot_fields(row)
+            fields = {key: value for key, value in fields.items() if value is not None}
+            slots.append({"tag": f"Remote{slot}", "node": node, **fields})
         snap["slots"] = slots
+        snap.pop("remotes", None)
         return snap
 
     def sine_view(self) -> dict:
@@ -181,12 +203,18 @@ class Service:
         return self.sine_view()
 
     async def _sine_loop(self) -> None:
-        try:
-            while self._sine_on:
+        while self._sine_on:
+            try:
                 await self._sine_once()
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:
+                self._trace(f"RSSI sine failed: {exc}")
+                log.exception("sine loop failed")
+            try:
                 await asyncio.sleep(_SINE_EVERY)
-        except asyncio.CancelledError:
-            return
+            except asyncio.CancelledError:
+                return
 
     async def _sine_once(self) -> None:
         elapsed = time.monotonic() - self._sine_t0
@@ -251,7 +279,7 @@ class Service:
         self.radios.updated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
         if self.opc.ready:
             await self.opc.write_rssi_wave(rows)
-        self.persist()
+        self.persist(remotes_only=True)
 
     async def _on_radios(self, snap: dict) -> None:
         note = snap.get("error") or f"{snap['host']}: {snap['count']} remote" + ("" if snap["count"] == 1 else "s")
@@ -260,7 +288,7 @@ class Service:
             self._trace("Radio poll failed: " + snap["error"] if snap.get("error") else "Radio poll " + note)
         if self.opc.ready:
             await self.opc.publish_radios(snap)
-        self.persist()
+        self.persist(remotes_only=True)
 
     async def snapshot(self) -> dict:
         readback = await self.opc.readback()
@@ -539,7 +567,7 @@ class Service:
         }
         history = [record, *list(self.traps)]
         published = await self.opc.publish(record, history, self.counts)
-        public = {key: value for key, value in record.items() if key != "received"}
+        public = {key: value for key, value in record.items() if key not in ("received", "varbindsJson")}
         public["opcua"] = published
         self.traps.appendleft(public)
         upstream = published.get("upstream")
@@ -572,11 +600,7 @@ class Service:
         except Exception:
             log.exception("agent update failed")
         pending = self._pending
-        if (
-            pending is not None
-            and not pending.done()
-            and public["trapOid"] == self._expect
-        ):
+        if pending is not None and not pending.done() and _trap_matches(self._expect, public):
             pending.set_result(public)
 
     def _trace(self, line: str) -> None:

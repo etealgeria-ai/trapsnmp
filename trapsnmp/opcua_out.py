@@ -26,7 +26,7 @@ _TAG_INITIAL = {"bool": False, "string": "", "int": 0, "uint": 0}
 
 NS_URI = "urn:trapsnmp:snmp"
 SLOT_COUNT = 8
-REMOTE_TAG_COUNT = 999
+REMOTE_TAG_COUNT = 255
 
 LATEST_FIELDS = (
     ("Source", ua.VariantType.String, ""),
@@ -80,6 +80,7 @@ class OpcuaBridge:
         self._reader: Client | None = None
         self._forwarder: Client | None = None
         self._forward_url = ""
+        self._forward_lock = asyncio.Lock()
         self._read_lock = asyncio.Lock()
         self._tag_store = None
         self._tags_parent = None
@@ -357,20 +358,20 @@ class OpcuaBridge:
         ns = self.namespace_index or 2
         folders: list[str] = []
         if folder == "trapsnmp":
-            folders = ["Latest", "Gateway", "Upstream", "Radios", "Tags"]
+            folders = ["Latest", "Gateway", "Upstream", "Recent", "Radios", "Tags"]
             keys: list[str] = []
         elif folder == "Radios":
             folders = [f"Remote{number}" for number in range(1, REMOTE_TAG_COUNT + 1)]
             keys = [key for key in self.nodes if key.startswith("Radios.")]
-        elif folder.startswith("Remote") and folder[6:].isdigit():
+        elif folder.startswith("Remote") and folder[6:].isdigit() and 1 <= int(folder[6:]) <= REMOTE_TAG_COUNT:
             keys = [key for key in self.nodes if key.startswith(folder + ".")]
-        elif folder in ("Latest", "Gateway", "Upstream"):
+        elif folder in ("Latest", "Gateway", "Upstream", "Recent"):
             keys = [key for key in self.nodes if key.startswith(folder + ".")]
         elif folder == "Tags":
             keys = [
                 key
                 for key in self.nodes
-                if not key.startswith(("Latest.", "Gateway.", "Upstream.", "Radios.", "Remote"))
+                if not key.startswith(("Latest.", "Gateway.", "Upstream.", "Recent.", "Radios.", "Remote"))
             ]
         else:
             return {"ok": False, "error": "Unknown folder.", "folders": [], "items": []}
@@ -456,13 +457,15 @@ class OpcuaBridge:
         }
         encoded = json.dumps(payload, separators=(",", ":"))
         try:
-            client = await self._forward_client()
-            node = client.get_node(self.upstream["nodeId"])
-            await node.write_value(encoded, ua.VariantType.String)
+            async with self._forward_lock:
+                client = await asyncio.wait_for(self._forward_client(), 1.0)
+                node = client.get_node(self.upstream["nodeId"])
+                await asyncio.wait_for(node.write_value(encoded, ua.VariantType.String), 1.0)
         except Exception as exc:
             self.upstream["failed"] += 1
             self.upstream["status"] = str(exc)
-            await self._drop_forwarder()
+            async with self._forward_lock:
+                await self._drop_forwarder()
             log.warning("upstream write failed: %s", exc)
             return "failed"
         self.upstream["forwarded"] += 1
@@ -686,8 +689,15 @@ class OpcuaBridge:
             return self._forwarder
         await self._drop_forwarder()
         client = Client(url)
-        client.session_timeout = 600_000
-        await client.connect()
+        client.session_timeout = 10_000
+        try:
+            await client.connect()
+        except BaseException:
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            raise
         self._forwarder = client
         self._forward_url = url
         return client

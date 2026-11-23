@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import os
 import re
 import socket
 from datetime import datetime, timezone
@@ -22,9 +23,10 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.serialization import Encoding
 from cryptography.x509.oid import ExtendedKeyUsageOID
 
+from trapsnmp.settings import data_dir
+
 log = logging.getLogger("trapsnmp.pki")
 
-PKI_ROOT = Path("/workspace/data/pki")
 APP_URI = "urn:trapsnmp:gateway"
 _NAME = re.compile(r"^[0-9A-Fa-f]{40}\.der$")
 
@@ -50,13 +52,17 @@ class Pki:
         self.validator = ClientCertValidator(self.trusted, self.rejected)
 
     @classmethod
-    async def ensure(cls, root: Path = PKI_ROOT) -> "Pki":
-        store = cls(root)
+    async def ensure(cls, root: Path | None = None) -> "Pki":
+        store = cls(root or (data_dir() / "pki"))
         for path in (store.cert_file.parent, store.trusted, store.crl, store.rejected):
             path.mkdir(parents=True, exist_ok=True)
-        if not store.key_file.is_file() or not store.cert_file.is_file():
+        if store.key_file.is_file():
+            os.chmod(store.key_file, 0o600)
+        if not store.key_file.is_file() or not store.cert_file.is_file() or store._expired():
+            if store.cert_file.is_file():
+                log.info("Replacing the OPC UA certificate at %s", store.cert_file)
             store._create()
-            log.info("Created OPC UA certificate %s", store.cert_file)
+            log.info("OPC UA certificate is %s", store.cert_file)
         return store
 
     def _create(self) -> None:
@@ -80,7 +86,19 @@ class Pki:
             days=365,
         )
         self.key_file.write_bytes(dump_private_key_as_pem(key))
+        os.chmod(self.key_file, 0o600)
         self.cert_file.write_bytes(certificate.public_bytes(Encoding.DER))
+
+    def _expired(self) -> bool:
+        if not self.cert_file.is_file():
+            return False
+        try:
+            expires = self.certificate().not_valid_after_utc
+        except Exception:
+            return True
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        return expires <= datetime.now(timezone.utc)
 
     def certificate(self) -> x509.Certificate:
         return x509.load_der_x509_certificate(self.cert_file.read_bytes())

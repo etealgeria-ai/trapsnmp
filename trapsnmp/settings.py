@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import configparser
 import json
+import os
 from pathlib import Path
 
-INI_PATH = Path("/workspace/data/trapsnmp.ini")
-_JSON_PATH = Path("/workspace/data/ge-master.json")
+from trapsnmp.radios import _MAX_REMOTES
 
 _REMOTE_FIELDS = (
     "ifIndex",
@@ -61,6 +61,26 @@ _REMOTE_INTS = {
 }
 
 
+def data_dir() -> Path:
+    chosen = os.environ.get("TRAPSNMP_DATA", "").strip()
+    if chosen:
+        path = Path(chosen).expanduser()
+    elif Path("/workspace/data").is_dir():
+        path = Path("/workspace/data")
+    else:
+        path = Path("data")
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def ini_path() -> Path:
+    return data_dir() / "trapsnmp.ini"
+
+
+def legacy_json_path() -> Path:
+    return data_dir() / "ge-master.json"
+
+
 def _parser() -> configparser.ConfigParser:
     parser = configparser.ConfigParser(interpolation=None)
     parser.optionxform = str
@@ -83,15 +103,15 @@ def _int(value: str | None, default: int) -> int:
 def load(service) -> None:
     service._loading = True
     try:
-        if not INI_PATH.exists():
+        if not ini_path().exists():
             _migrate_master(service)
             return
         parser = _parser()
-        parser.read(INI_PATH, encoding="utf-8")
+        parser.read(ini_path(), encoding="utf-8")
         _apply(service, parser)
     finally:
         service._loading = False
-    if not INI_PATH.exists():
+    if not ini_path().exists():
         save(service)
 
 
@@ -162,15 +182,20 @@ def save(service) -> None:
                 section[key] = str(value)
         if section:
             parser[f"remote.{index}"] = section
-    INI_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with INI_PATH.open("w", encoding="utf-8") as handle:
+    path = ini_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".ini.tmp")
+    with temporary.open("w", encoding="utf-8") as handle:
         handle.write("; trapsnmp settings. Loaded automatically on the next start.\n")
         parser.write(handle)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
 
 
 def _migrate_master(service) -> None:
     try:
-        saved = json.loads(_JSON_PATH.read_text(encoding="utf-8"))
+        saved = json.loads(legacy_json_path().read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return
     if not isinstance(saved, dict):
@@ -295,8 +320,8 @@ def _apply(service, parser: configparser.ConfigParser) -> None:
         if row:
             remotes.append(row)
     if remotes:
-        service.radios.remotes = remotes
-        for index, row in enumerate(remotes, start=1):
+        service.radios.remotes = remotes[:_MAX_REMOTES]
+        for index, row in enumerate(service.radios.remotes, start=1):
             stats = {}
             for key in ("txPackets", "txBytes", "rxPackets", "rxBytes", "txError", "rxError", "txDrop", "rxDrop"):
                 if key in row:

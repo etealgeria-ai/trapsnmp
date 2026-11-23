@@ -25,7 +25,11 @@ function ago(iso) {
   return `${iso.slice(11, 19)} UTC`;
 }
 
+let ticking = false;
+
 async function tick() {
+  if (ticking) return;
+  ticking = true;
   try {
     const response = await fetch("/api/state");
     if (!response.ok) throw new Error("status");
@@ -35,6 +39,8 @@ async function tick() {
     const dot = document.getElementById("status-dot");
     if (text) text.textContent = "Console lost the gateway";
     if (dot) dot.className = "dot bad";
+  } finally {
+    ticking = false;
   }
 }
 
@@ -161,7 +167,7 @@ function render(data) {
   if (sineToggle) sineToggle.textContent = sine.enabled ? "Stop RSSI sine" : "Start RSSI sine";
   if (sineNote) {
     sineNote.textContent = sine.enabled && sine.rssi !== null && sine.rssi !== undefined
-      ? `Running. Shared RSSI ${sine.rssi} dBm. Remote1–Remote999 add a random ±${sine.spread} dBm.`
+      ? `Running. Shared RSSI ${sine.rssi} dBm. Remote1–Remote255 add a random ±${sine.spread} dBm.`
       : sine.enabled
         ? "Running."
         : "Stopped.";
@@ -639,13 +645,14 @@ function opcTree() {
   const button = (id, label, cls) =>
     `<button type="button" class="${cls}${id === current ? " selected" : ""}" data-opc="${esc(id)}">${esc(label)}</button>`;
   const remotes = state.opcRadios
-    ? Array.from({ length: 999 }, (_, index) => button(`Remote${index + 1}`, `Remote${index + 1}`, "remote")).join("")
+    ? Array.from({ length: 255 }, (_, index) => button(`Remote${index + 1}`, `Remote${index + 1}`, "remote")).join("")
     : "";
   host.innerHTML = [
     button("trapsnmp", "trapsnmp", ""),
     button("Latest", "Latest", "child"),
     button("Gateway", "Gateway", "child"),
     button("Upstream", "Upstream", "child"),
+    button("Recent", "Recent", "child"),
     button("Radios", "Radios", "child"),
     remotes,
     button("Tags", "Tags", "child"),

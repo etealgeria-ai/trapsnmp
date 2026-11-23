@@ -275,6 +275,29 @@ class SnmpAgent:
                 write_tree,
             )
 
+    def _unregister_community(self, item: dict) -> None:
+        if self._engine is None:
+            return
+        name = item["name"]
+        read_tree = (1, 3, 6, 1)
+        write_tree = read_tree if item.get("rights") == "read-write" else ()
+        try:
+            config.delV1System(self._engine, name)
+        except Exception:
+            log.warning("could not remove community %s from the agent", name, exc_info=True)
+        for model in (1, 2):
+            try:
+                config.delVacmUser(
+                    self._engine,
+                    model,
+                    name,
+                    "noAuthNoPriv",
+                    read_tree,
+                    write_tree,
+                )
+            except Exception:
+                log.warning("could not remove access for community %s", name, exc_info=True)
+
     def _arm_host_filter(self, snmp_engine) -> None:
         original = snmp_engine.msgAndPduDsp.receiveMessage
 
@@ -380,6 +403,9 @@ class SnmpAgent:
         if kind == "community":
             if key in ("public", "private"):
                 raise ValueError("The built-in communities stay in the list.")
+            current = next((item for item in self.communities if item["name"] == key), None)
+            if current is not None:
+                self._unregister_community(current)
             self.communities = [item for item in self.communities if item["name"] != key]
             return
         if kind == "destination":
