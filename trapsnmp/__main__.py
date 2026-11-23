@@ -6,6 +6,7 @@ import asyncio
 import logging
 
 from trapsnmp.service import Service
+from trapsnmp.tasks import spawn
 from trapsnmp.web import serve
 
 
@@ -15,15 +16,14 @@ async def _amain() -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     service = Service()
-    starter = asyncio.create_task(service.start())
 
-    async def _watch() -> None:
+    async def _start() -> None:
         try:
-            await starter
+            await service.start()
         except Exception:
             logging.getLogger("trapsnmp").exception("gateway start failed")
 
-    asyncio.create_task(_watch())
+    spawn(_start(), name="gateway-start")
     await serve(service)
 
 

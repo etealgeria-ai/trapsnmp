@@ -171,8 +171,22 @@ def _as_int(value) -> int | None:
     return None
 
 
+def _octets(value) -> bytes:
+    """Raw bytes of an OCTET STRING. Never calls bytes() on an integer,
+    which would build a zero-filled buffer of that length."""
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value)
+    as_octets = getattr(value, "asOctets", None)
+    if callable(as_octets):
+        try:
+            return bytes(as_octets())
+        except Exception:
+            return b""
+    return b""
+
+
 def _as_text(value) -> str:
-    raw = bytes(value) if not isinstance(value, str) else b""
+    raw = _octets(value)
     if raw and all(32 <= byte < 127 for byte in raw):
         return raw.decode("ascii").strip()
     text = str(value).strip().strip('"')
@@ -191,10 +205,7 @@ def _as_mac(value) -> str:
         if re.fullmatch(r"[0-9a-f]{12}", compact):
             return ":".join(compact[index : index + 2] for index in range(0, 12, 2)).upper()
         return ""
-    try:
-        raw = bytes(value)
-    except (TypeError, ValueError):
-        return ""
+    raw = _octets(value)
     if len(raw) == 6:
         return ":".join(f"{byte:02X}" for byte in raw)
     return ""
@@ -204,10 +215,7 @@ def _as_ip(value) -> str:
     text = str(value).strip()
     if re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", text):
         return text
-    try:
-        raw = bytes(value) if not isinstance(value, str) else b""
-    except (TypeError, ValueError):
-        raw = b""
+    raw = _octets(value)
     if len(raw) == 4:
         return ".".join(str(byte) for byte in raw)
     if len(raw) == 16:
@@ -291,7 +299,11 @@ def rows_from_binds(binds: list[tuple[str, object]]) -> list[dict]:
         if spec is None:
             continue
         key, kind = spec
-        row[key] = _decode(kind, value)
+        try:
+            row[key] = _decode(kind, value)
+        except Exception:
+            log.debug("could not decode %s", oid, exc_info=True)
+            row[key] = None
     rows = list(grouped.values())
     rows.sort(key=lambda item: (item["ifIndex"], item["mac"]))
     return rows[:_MAX_REMOTES]
@@ -422,9 +434,8 @@ class OrbitMaster:
                 await self.poll()
             except asyncio.CancelledError:
                 return
-            except Exception as exc:
-                self.error = str(exc)[:300]
-                log.exception("radio poll loop failed")
+            except Exception:
+                log.exception("radio poll cycle failed")
             try:
                 await asyncio.sleep(self.interval)
             except asyncio.CancelledError:

@@ -52,8 +52,10 @@ def _json_error(message: str, status: int = 400) -> web.Response:
 
 @web.middleware
 async def _json_posts(request: web.Request, handler):
-    if request.method == "POST" and "application/json" not in request.content_type:
-        return _json_error("Expected JSON.", 415)
+    # A page on another site can POST text/plain without a CORS preflight,
+    # and request.json() would still parse it. Only application/json is accepted.
+    if request.method == "POST" and request.content_type != "application/json":
+        return _json_error("Send JSON with Content-Type: application/json.", 415)
     return await handler(request)
 
 

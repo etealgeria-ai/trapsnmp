@@ -417,7 +417,7 @@ class SnmpAgent:
 
     def observe(self, record: dict) -> None:
         oid = str(record.get("trapOid") or "")
-        if oid.startswith(self.object_id()):
+        if self._own_trap(oid):
             return
         values = self._store["values"]
         message = record.get("message") or record.get("trapName") or ""
@@ -429,20 +429,29 @@ class SnmpAgent:
         values["message"] = message
         values["version"] = record.get("version") or ""
 
+    def _own_trap(self, oid: str) -> bool:
+        root = self.object_id()
+        return oid == root or oid.startswith(root + ".")
+
     def triggered(self, severity: int) -> bool:
         threshold = self.threshold
-        return {
+        rules = {
             "Source > Threshold": severity > threshold,
             "Source >= Threshold": severity >= threshold,
             "Source < Threshold": severity < threshold,
             "Source <= Threshold": severity <= threshold,
             "Source == Threshold": severity == threshold,
             "Source != Threshold": severity != threshold,
-        }[self.comparison]
+        }
+        rule = rules.get(self.comparison)
+        if rule is None:
+            self.last_notify = "Trigger comparison is not recognized"
+            return False
+        return rule
 
     async def maybe_notify(self, record: dict) -> None:
         oid = str(record.get("trapOid") or "")
-        if oid.startswith(self.object_id()) or not self.enabled:
+        if self._own_trap(oid) or not self.enabled:
             return
         if not self.destinations:
             return

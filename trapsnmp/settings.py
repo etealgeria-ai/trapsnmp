@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import configparser
 import json
+import logging
 import os
 from pathlib import Path
 
+from trapsnmp.agent import COMPARISONS
 from trapsnmp.radios import _MAX_REMOTES
+
+log = logging.getLogger("trapsnmp.settings")
 
 _REMOTE_FIELDS = (
     "ifIndex",
@@ -112,7 +116,10 @@ def load(service) -> None:
     finally:
         service._loading = False
     if not ini_path().exists():
-        save(service)
+        try:
+            save(service)
+        except OSError:
+            log.exception("Could not create %s", ini_path())
 
 
 def save(service) -> None:
@@ -245,8 +252,10 @@ def _apply(service, parser: configparser.ConfigParser) -> None:
         agent.accept_all = _bool(item.get("accept_all"), True)
         agent._store["enabled"] = agent.enabled
         comparison = item.get("comparison", agent.comparison)
-        if comparison:
+        if comparison in COMPARISONS:
             agent.comparison = comparison
+        elif comparison:
+            log.warning("Ignoring unknown agent comparison %r in %s", comparison, ini_path())
         agent.threshold = _int(item.get("threshold"), agent.threshold)
         agent.description = item.get("description", agent.description)
         agent.contact = item.get("contact", "")
@@ -285,8 +294,8 @@ def _apply(service, parser: configparser.ConfigParser) -> None:
         )
     if numbered:
         service.agent.destinations = destinations
-    if parser.has_section("sine"):
-        service._sine_on = _bool(parser["sine"].get("enabled"))
+    # A [sine] section from an older file is ignored. The RSSI sine starts
+    # stopped and is started from the Send page.
     opc_users: dict[str, str] = {}
     for section in parser.sections():
         if section.startswith("opc.user."):

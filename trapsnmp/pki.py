@@ -85,8 +85,13 @@ class Pki:
             [ExtendedKeyUsageOID.SERVER_AUTH, ExtendedKeyUsageOID.CLIENT_AUTH],
             days=365,
         )
-        self.key_file.write_bytes(dump_private_key_as_pem(key))
-        os.chmod(self.key_file, 0o600)
+        descriptor = os.open(self.key_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(dump_private_key_as_pem(key))
+        try:
+            os.chmod(self.key_file, 0o600)
+        except OSError:
+            pass
         self.cert_file.write_bytes(certificate.public_bytes(Encoding.DER))
 
     def _expired(self) -> bool:
