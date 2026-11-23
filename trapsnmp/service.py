@@ -53,7 +53,8 @@ def _trap_matches(expected: str, record: dict) -> bool:
         return False
     generic, specific, enterprise = v1_identity(received)
     enterprise = enterprise.lstrip(".")
-    if expected in (enterprise, f"{enterprise}.0.{specific}"):
+    # pysnmp rebuilds a company-specific v1 trap …1.1 as …1.0.1
+    if expected in (enterprise, f"{enterprise}.{specific}", f"{enterprise}.0.{specific}"):
         return True
     return generic < 6 and expected == f"1.3.6.1.6.3.1.1.5.{generic + 1}"
 
@@ -63,7 +64,7 @@ _MAX_VALUE = 512
 _SINE_CENTER = -75
 _SINE_AMPLITUDE = 15
 _SINE_PERIOD = 30.0
-_SINE_EVERY = 2.0
+_SINE_EVERY = 10.0
 _SINE_SPREAD = 8
 _LINK_NUM = {name: number for number, name in LINK_STATUS.items()}
 _MOD_NUM = {name: number for number, name in MODULATION.items()}
@@ -107,6 +108,8 @@ class Service:
         self._sine_down: int | None = None
         self._sine_stats: dict[int, dict[str, int]] = {}
         self._remotes_saved_at = 0.0
+        self._remotes_dirty = False
+        self._remote_save_task: asyncio.Task | None = None
         self._started = False
         self.started_at = datetime.now(timezone.utc)
         load_settings(self)
@@ -118,9 +121,30 @@ class Service:
     def persist(self, *, remotes_only: bool = False) -> None:
         now = time.monotonic()
         if remotes_only and now - self._remotes_saved_at < 60:
+            self._remotes_dirty = True
+            self._arm_remote_save()
             return
         save_settings(self)
         self._remotes_saved_at = now
+        self._remotes_dirty = False
+
+    def _arm_remote_save(self) -> None:
+        if self._remote_save_task is not None and not self._remote_save_task.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        delay = max(0.0, 60.0 - (time.monotonic() - self._remotes_saved_at))
+        self._remote_save_task = loop.create_task(self._flush_remotes(delay))
+
+    async def _flush_remotes(self, delay: float) -> None:
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            return
+        if self._remotes_dirty:
+            self.persist()
 
     async def start(self) -> None:
         if self._started:

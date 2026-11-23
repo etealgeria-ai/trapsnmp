@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from datetime import datetime, timezone
 
 from asyncua import Client, Server, ua
@@ -81,6 +82,8 @@ class OpcuaBridge:
         self._forwarder: Client | None = None
         self._forward_url = ""
         self._forward_lock = asyncio.Lock()
+        self._forward_pause_until = 0.0
+        self._forward_pause_reason = ""
         self._read_lock = asyncio.Lock()
         self._tag_store = None
         self._tags_parent = None
@@ -437,6 +440,14 @@ class OpcuaBridge:
         else:
             self.upstream["status"] = "Armed"
         self._forward_url = ""
+        self._forward_pause_until = 0.0
+        self._forward_pause_reason = ""
+
+    def _forward_failed(self, reason: str) -> str:
+        text = (reason or "Upstream did not answer").strip() or "Upstream did not answer"
+        self.upstream["failed"] += 1
+        self.upstream["status"] = text
+        return "failed"
 
     async def _forward(self, trap: dict) -> str:
         payload = {
@@ -456,18 +467,26 @@ class OpcuaBridge:
             "varbinds": trap["varbinds"],
         }
         encoded = json.dumps(payload, separators=(",", ":"))
+        if time.monotonic() < self._forward_pause_until:
+            return self._forward_failed(self._forward_pause_reason)
         try:
             async with self._forward_lock:
-                client = await asyncio.wait_for(self._forward_client(), 1.0)
+                if time.monotonic() < self._forward_pause_until:
+                    return self._forward_failed(self._forward_pause_reason)
+                client = await asyncio.wait_for(self._forward_client(), 4.0)
                 node = client.get_node(self.upstream["nodeId"])
-                await asyncio.wait_for(node.write_value(encoded, ua.VariantType.String), 1.0)
+                await asyncio.wait_for(node.write_value(encoded, ua.VariantType.String), 4.0)
         except Exception as exc:
-            self.upstream["failed"] += 1
-            self.upstream["status"] = str(exc)
-            async with self._forward_lock:
-                await self._drop_forwarder()
-            log.warning("upstream write failed: %s", exc)
-            return "failed"
+            reason = str(exc).strip() or "Upstream did not answer"
+            self._forward_pause_until = time.monotonic() + 10
+            self._forward_pause_reason = reason
+            try:
+                async with self._forward_lock:
+                    await self._drop_forwarder()
+            except Exception:
+                log.exception("could not close the upstream client")
+            log.warning("upstream write failed: %s", reason)
+            return self._forward_failed(reason)
         self.upstream["forwarded"] += 1
         self.upstream["status"] = "Last write succeeded"
         try:
