@@ -124,6 +124,15 @@ class OpcuaBridge:
             "failed": 0,
         }
 
+    def active_clients(self) -> int:
+        server = self._server
+        bserver = getattr(server, "bserver", None) if server is not None else None
+        clients = getattr(bserver, "clients", None) if bserver is not None else None
+        total = len(clients) if clients is not None else 0
+        if self.readback_enabled and self._reader is not None and total:
+            total -= 1
+        return total
+
     async def start(self) -> None:
         server = Server(user_manager=self.users)
         await server.init()

@@ -105,6 +105,8 @@ function render(data) {
   renderUsers(snmp.users || []);
 
   document.getElementById("opc-endpoint").textContent = opc.ready ? opc.endpoint : (opc.error || "Starting");
+  const clients = document.getElementById("opc-clients");
+  if (clients) clients.textContent = String(opc.clients ?? 0);
   paintReadback(opc.readback !== false);
   document.getElementById("opc-ns").textContent = opc.namespace || "urn:trapsnmp:snmp";
   document.getElementById("opc-node").textContent = opc.nodes?.trapOid || "—";

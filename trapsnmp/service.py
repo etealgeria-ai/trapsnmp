@@ -425,6 +425,7 @@ class Service:
                 "security": "None and current secure profiles",
                 "identity": "anonymous",
                 "readback": self.opc.readback_enabled,
+                "clients": self.opc.active_clients(),
                 "certificate": self.opc.security_summary(),
                 "eventType": "SnmpTrapEvent",
                 "eventCount": self.opc.event_count,
