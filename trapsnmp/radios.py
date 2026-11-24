@@ -34,7 +34,7 @@ def _master_address(value: str, *, required: bool) -> str:
     text = value.strip()
     if not text:
         if required:
-            raise ValueError("Master 1 address is required.")
+            raise ValueError("GE Master Station 1 address is required.")
         return ""
     if not _HOST.fullmatch(text):
         raise ValueError("Each master address must be a hostname or IPv4 address.")
@@ -438,7 +438,7 @@ class OrbitMaster:
         ]
         filled = [item for item in hosts if item]
         if len(filled) != len(set(filled)):
-            raise ValueError("The three master addresses must be different.")
+            raise ValueError("GE Master Station addresses must be different.")
         community = community.strip()
         if not community or len(community) > 256:
             raise ValueError("Community must be 1 to 256 characters.")
