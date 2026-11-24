@@ -594,6 +594,7 @@ def _console_ssl() -> ssl.SSLContext:
     if not cert_file.is_file() or not key_file.is_file() or not _cert_is_server(cert_file):
         _write_console_cert(cert_file, key_file)
         log.info("Console HTTPS certificate is %s", cert_file)
+    _ensure_console_chain(folder)
     try:
         os.chmod(key_file, 0o600)
     except OSError:
@@ -661,6 +662,17 @@ def _write_console_cert(cert_file: Path, key_file: Path) -> None:
             )
         )
     cert_file.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+    _ensure_console_chain(folder)
+
+
+def _ensure_console_chain(folder: Path) -> None:
+    certificate = (folder / "cert.pem").read_bytes().rstrip() + b"\n"
+    authority = (folder / "ca.crt").read_bytes()
+    (folder / "chain.pem").write_bytes(certificate + authority)
+    cer = folder / "ca.cer"
+    if not cer.is_file():
+        loaded = x509.load_pem_x509_certificate(authority)
+        cer.write_bytes(loaded.public_bytes(serialization.Encoding.DER))
 
 
 def _console_ca(folder: Path):
@@ -728,8 +740,6 @@ def _cert_is_server(path: Path) -> bool:
         x509.ExtendedKeyUsageOID.SERVER_AUTH in usage
         and certificate.issuer == authority.subject
         and has_loopback
-        and (path.parent / "chain.pem").is_file()
-        and (path.parent / "ca.cer").is_file()
     )
 
 
