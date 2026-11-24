@@ -130,6 +130,9 @@ class Service:
         if self._sine_on:
             self._sine_on = False
             self.persist()
+        if self.opc.readback_enabled or getattr(self, "_readback_reset", False):
+            self.opc.readback_enabled = False
+            self.persist()
 
     def persist(self, *, remotes_only: bool = False) -> None:
         now = time.monotonic()

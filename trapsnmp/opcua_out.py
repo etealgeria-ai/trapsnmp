@@ -85,7 +85,7 @@ class OpcuaBridge:
         self._forward_pause_until = 0.0
         self._forward_pause_reason = ""
         self._read_lock = asyncio.Lock()
-        self.readback_enabled = True
+        self.readback_enabled = False
         self._tag_store = None
         self._tags_parent = None
         self._radios_parent = None

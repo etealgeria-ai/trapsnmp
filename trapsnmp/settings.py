@@ -357,8 +357,11 @@ def _apply(service, parser: configparser.ConfigParser) -> None:
                 opc_users[section[len("opc.user.") :]] = password
     if opc_users:
         service.opc.users.passwords = opc_users
-    if parser.has_section("readback"):
-        service.opc.readback_enabled = parser["readback"].get("enabled", "true").strip().lower() == "true"
+    # [readback] from an older file is ignored. The internal OPC UA session
+    # starts stopped and is started from the Publish page.
+    service.opc.readback_enabled = False
+    if parser.has_section("readback") and parser["readback"].get("enabled", "false").strip().lower() == "true":
+        service._readback_reset = True
     if parser.has_section("windows"):
         service.windows_service = parser["windows"].get("enabled", "false").strip().lower() == "true"
     remotes = []
