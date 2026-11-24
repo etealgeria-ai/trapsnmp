@@ -455,13 +455,12 @@
           <p class="index">02</p>
           <h2>Windows service</h2>
         </div>
-        <p class="hint">On Windows, turn this on to start trapsnmp at boot as a service, before anyone signs in. The web page stays up with the service. You do not need a console window open. Windows asks for administrator approval. Turn it off to stop and remove that service. This does nothing on Linux.</p>
-        <form id="service-form">
-          <label class="checkline">
-            <input name="enabled" type="checkbox" />
-            <span>Run as a Windows service</span>
-          </label>
-        </form>
+        <p class="hint">On Windows, Start registers the service if it is missing and runs it. Stop leaves it installed. Delete stops it and removes it. Windows asks for administrator approval. The page closes if the service itself is serving it. This does nothing on Linux.</p>
+        <div class="actions" id="service-form">
+          <button type="button" class="primary" id="service-start">Start</button>
+          <button type="button" class="ghost" id="service-stop">Stop</button>
+          <button type="button" class="ghost" id="service-delete">Delete</button>
+        </div>
         <p class="note" id="service-note"></p>
       </section>
     </div>

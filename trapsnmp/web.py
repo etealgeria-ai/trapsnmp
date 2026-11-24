@@ -499,19 +499,27 @@ async def handle_windows_service(request: web.Request) -> web.Response:
         return _json_error("Expected JSON.")
     if not isinstance(body, dict):
         return _json_error("Expected a JSON object.")
-    enabled = bool(body.get("enabled"))
+    action = str(body.get("action") or "").strip().lower()
+    if action not in ("start", "stop", "delete"):
+        if "enabled" in body:
+            action = "start" if body.get("enabled") else "delete"
+        else:
+            return _json_error("Use start, stop, or delete.")
     try:
-        from trapsnmp.win_service import apply
+        from trapsnmp.win_service import control
 
-        report = apply(enabled)
+        report = control(action)
     except ValueError as exc:
         return _json_error(str(exc))
     except Exception as exc:
         log.exception("windows service change failed")
         return _json_error(str(exc), 500)
-    service.windows_service = enabled
+    if action == "start":
+        service.windows_service = True
+    elif action == "delete":
+        service.windows_service = False
     service.persist()
-    service._trace(report.get("detail") or ("Windows service on" if enabled else "Windows service off"))
+    service._trace(report.get("detail") or f"Windows service {action}")
     return web.json_response({"ok": True, "windowsService": report})
 
 

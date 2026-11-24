@@ -38,6 +38,122 @@ def status() -> dict:
     return dict(value)
 
 
+def control(action: str) -> dict:
+    if os.name != "nt":
+        raise ValueError("Start, stop, and delete are only available on Windows.")
+    action = action.strip().lower()
+    if action not in ("start", "stop", "delete"):
+        raise ValueError("Use start, stop, or delete.")
+    _CACHE["value"] = None
+    current = _query()
+    if action == "start":
+        if current.get("running"):
+            current["detail"] = "The Windows service is already running."
+            return current
+        if not current.get("installed"):
+            return apply(True)
+        _spawn([_sc(), "start", SERVICE])
+        return _pending("Starting the Windows service. This page closes if another copy is still using the ports.")
+    if not current.get("installed"):
+        current["detail"] = "The Windows service is not installed."
+        return current
+    if action == "stop":
+        _spawn([_sc(), "stop", SERVICE])
+        return _pending("Stopping the Windows service. This page closes if the service is serving it.")
+    if os.environ.get("TRAPSNMP_SERVICE") == "1":
+        _schedule_delete()
+        _spawn([_sc(), "stop", SERVICE])
+        return _pending("The service is stopping and will be deleted.")
+    _spawn_powershell(
+        "Stop-Service -Name trapsnmp -Force -ErrorAction SilentlyContinue; "
+        "Start-Sleep -Seconds 4; sc.exe delete trapsnmp"
+    )
+    return _pending("Stopping and deleting the Windows service.")
+
+
+def _pending(detail: str) -> dict:
+    _CACHE["value"] = None
+    result = _blank(detail, supported=True)
+    result["pending"] = True
+    return result
+
+
+def _sc() -> str:
+    root = os.environ.get("SystemRoot", r"C:\Windows")
+    return os.path.join(root, "System32", "sc.exe")
+
+
+def _spawn(argv: list[str]) -> None:
+    if _is_admin():
+        subprocess.Popen(argv, creationflags=_no_window(), close_fds=True)
+        return
+    exe, args = argv[0], argv[1:]
+    joined = ",".join(_ps_quote(part) for part in args)
+    subprocess.Popen(
+        [
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            f"Start-Process -FilePath {_ps_quote(exe)} -Verb RunAs -ArgumentList {joined}",
+        ],
+        creationflags=_no_window(),
+    )
+
+
+def _spawn_powershell(command: str) -> None:
+    if _is_admin():
+        subprocess.Popen(
+            ["powershell", "-NoProfile", "-Command", command],
+            creationflags=_no_window(),
+            close_fds=True,
+        )
+        return
+    pieces = ["-NoProfile", "-Command", command]
+    joined = ",".join(_ps_quote(part) for part in pieces)
+    subprocess.Popen(
+        [
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            f"Start-Process -FilePath powershell -Verb RunAs -ArgumentList {joined}",
+        ],
+        creationflags=_no_window(),
+    )
+
+
+def _schedule_delete() -> None:
+    stamp = time.strftime("%H:%M", time.localtime(time.time() + 90))
+    command = "cmd /c sc stop trapsnmp & ping -n 8 127.0.0.1 >nul & sc delete trapsnmp & schtasks /Delete /TN trapsnmp-delete /F"
+    subprocess.Popen(
+        [
+            "schtasks",
+            "/Create",
+            "/TN",
+            "trapsnmp-delete",
+            "/TR",
+            command,
+            "/SC",
+            "ONCE",
+            "/ST",
+            stamp,
+            "/RU",
+            "SYSTEM",
+            "/RL",
+            "HIGHEST",
+            "/F",
+        ],
+        creationflags=_no_window(),
+        close_fds=True,
+    )
+
+
+def _no_window() -> int:
+    return getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
+SERVICE = "trapsnmp"
+
+
 def apply(enabled: bool) -> dict:
     if os.name != "nt":
         raise ValueError("Run as a service is only available on Windows.")
@@ -90,18 +206,18 @@ def _query() -> dict:
     text = (done.stdout or "").strip().splitlines()
     line = text[-1].strip() if text else ""
     if not line or line == "missing":
-        return _blank("Not installed. Turn this on to register the trapsnmp service.", supported=True)
+        return _blank("Not installed. Start registers the service and runs it.", supported=True)
     parts = line.split()
     if len(parts) != 2 or not all(part.isdigit() for part in parts):
-        return _blank("Not installed. Turn this on to register the trapsnmp service.", supported=True)
+        return _blank("Not installed. Start registers the service and runs it.", supported=True)
     running = parts[0] == "4"
     automatic = parts[1] == "2"
     if running:
         detail = "Running as a Windows service. It starts at boot."
     elif automatic:
-        detail = "Installed. It starts at boot, and it is not running yet."
+        detail = "Installed. It starts at boot, and it is not running yet. Press Start to run it."
     else:
-        detail = "Installed, but it does not start at boot. Turn this on to set that."
+        detail = "Installed, but it does not start at boot. Press Start to run it."
     return {
         "supported": True,
         "installed": True,

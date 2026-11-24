@@ -878,41 +878,48 @@ document.getElementById("radio-form")?.addEventListener("submit", async (event) 
 let serviceHold = 0;
 
 function renderWindows(info) {
-  const form = document.getElementById("service-form");
-  if (!form || !info) return;
-  const box = form.elements.enabled;
   const note = document.getElementById("service-note");
   const held = Date.now() < serviceHold;
-  if (box && !held) {
-    box.checked = !!info.enabled;
-    box.disabled = !info.supported;
+  for (const id of ["service-start", "service-stop", "service-delete"]) {
+    const button = document.getElementById(id);
+    if (button) button.disabled = !info?.supported;
   }
-  if (note && !held) note.textContent = info.detail || "";
+  if (note && !held) note.textContent = info?.detail || "";
 }
 
-document.getElementById("service-form")?.addEventListener("change", async (event) => {
-  const form = event.currentTarget;
-  const enabled = form.elements.enabled.checked;
+for (const [id, action] of [
+  ["service-start", "start"],
+  ["service-stop", "stop"],
+  ["service-delete", "delete"],
+]) {
+  document.getElementById(id)?.addEventListener("click", () => serviceAction(action));
+}
+
+async function serviceAction(action) {
   const note = document.getElementById("service-note");
   serviceHold = Date.now() + 20000;
-  if (note) note.textContent = enabled ? "Asking Windows to install the service…" : "Asking Windows to remove the service…";
+  const waiting = {
+    start: "Starting the service…",
+    stop: "Stopping the service…",
+    delete: "Deleting the service…",
+  };
+  if (note) note.textContent = waiting[action] || "Working…";
   try {
     const response = await fetch("/api/windows-service", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ enabled }),
+      body: JSON.stringify({ action }),
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(body.error || "Could not change the Windows service");
     if (note) note.textContent = body.windowsService?.detail || "";
-    setBench(enabled ? "Windows service requested." : "Windows service removal requested.");
+    setBench(body.windowsService?.detail || "Windows service updated.");
   } catch (err) {
-    form.elements.enabled.checked = !enabled;
     serviceHold = 0;
     if (note) note.textContent = err.message;
     setBench(err.message, true);
   }
-});
+}
 
 function renderTags(tags) {
   if (!tags) return;
