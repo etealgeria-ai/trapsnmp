@@ -24,7 +24,7 @@ python -m trapsnmp
 
 ## Windows service
 
-Yes. Right-click `windows\install-service.bat` and choose **Run as administrator**, or on the Config page turn on **Run as a Windows service**. That installs pywin32, registers a service named **trapsnmp**, and starts it. Windows starts the service at boot as Local System, before anyone signs in, and restarts it if the process exits. The console stays at `https://127.0.0.1:8888/`. Output is appended to `data\trapsnmp.log`. `services.msc` lists it as trapsnmp. The Config page asks for administrator approval and does nothing on Linux. Turn the same switch off to stop and remove the service.
+Yes. Right-click `windows\install-service.bat` and choose **Run as administrator**, or on the Config page turn on **Run as a Windows service**. That installs pywin32, registers a service named **trapsnmp**, and starts it. Windows starts the service at boot as Local System, before anyone signs in, and restarts the gateway if that process exits. No console window has to stay open. Closing one does not stop the web server: the service starts it again. The page stays at `https://127.0.0.1:8888/`. Output is appended to `data\trapsnmp.log`. `services.msc` lists it as trapsnmp. The Config page asks for administrator approval and does nothing on Linux. Turn the same switch off to stop and remove the service. If the service says Running but the page does not open, run `windows\install-service.bat` again so it launches `pythonw.exe` instead of the service host.
 
 Stop the copy you started by hand before installing, so UDP 162 and OPC UA 4840 are free. The installer also removes the startup task from `install-autorun.bat` if that task exists, so the gateway is not started twice.
 
