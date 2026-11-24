@@ -510,14 +510,51 @@ async def serve(service: Service) -> None:
         site = web.TCPSite(runner, "0.0.0.0", 8080)
         await site.start()
         log.info("console ready at http://127.0.0.1:8080/")
-    else:
-        loop = asyncio.get_running_loop()
-        await loop.create_server(lambda: _Either(runner.server, context), "0.0.0.0", 8080)
-        log.info("console ready at http://127.0.0.1:8080/ and https://127.0.0.1:8080/")
-    await asyncio_forever()
+        await asyncio_forever()
+        return
+    await _serve_http_and_https(runner.server, context)
 
 
-class _Either(asyncio.Protocol):
+async def _serve_http_and_https(factory, ssl_context: ssl.SSLContext) -> None:
+    loop = asyncio.get_running_loop()
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("0.0.0.0", 8080))
+    sock.listen(128)
+    sock.setblocking(False)
+    log.info("console ready at http://127.0.0.1:8080/ and https://127.0.0.1:8080/")
+    while True:
+        client, _addr = await loop.sock_accept(sock)
+        asyncio.create_task(_hand_console(loop, client, factory, ssl_context))
+
+
+def _peek_first(sock: socket.socket) -> bytes:
+    sock.settimeout(30)
+    try:
+        return sock.recv(1, socket.MSG_PEEK)
+    except (TimeoutError, socket.timeout, OSError):
+        return b""
+
+
+async def _hand_console(loop, client: socket.socket, factory, ssl_context: ssl.SSLContext) -> None:
+    try:
+        first = await loop.run_in_executor(None, _peek_first, client)
+        client.setblocking(False)
+        if not first:
+            client.close()
+            return
+        if first == b"\x16":
+            await loop.connect_accepted_socket(
+                factory, client, ssl=ssl_context, ssl_handshake_timeout=30
+            )
+        else:
+            await loop.connect_accepted_socket(factory, client)
+    except Exception as exc:
+        log.warning("console connection failed: %s", exc)
+        try:
+            client.close()
+        except Exception:
+            pass
     """Serve HTTP and HTTPS on the same port. TLS starts with 0x16; HTTP does not."""
 
     def __init__(self, factory, ssl_context: ssl.SSLContext) -> None:
@@ -578,7 +615,7 @@ def _console_ssl() -> ssl.SSLContext:
     folder.mkdir(parents=True, exist_ok=True)
     cert_file = folder / "cert.pem"
     key_file = folder / "key.pem"
-    if not cert_file.is_file() or not key_file.is_file():
+    if not cert_file.is_file() or not key_file.is_file() or not _cert_is_server(cert_file):
         _write_console_cert(cert_file, key_file)
         log.info("Console HTTPS certificate is %s", cert_file)
     try:
@@ -616,6 +653,21 @@ def _write_console_cert(cert_file: Path, key_file: Path) -> None:
         .not_valid_before(now - timedelta(minutes=5))
         .not_valid_after(now + timedelta(days=15 * 365))
         .add_extension(x509.SubjectAlternativeName(alt), critical=False)
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=True,
+                key_encipherment=True,
+                content_commitment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=False,
+                crl_sign=False,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
+        .add_extension(x509.ExtendedKeyUsage([x509.ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
         .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
         .sign(key, hashes.SHA256())
     )
@@ -629,6 +681,15 @@ def _write_console_cert(cert_file: Path, key_file: Path) -> None:
             )
         )
     cert_file.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+
+
+def _cert_is_server(path: Path) -> bool:
+    try:
+        certificate = x509.load_pem_x509_certificate(path.read_bytes())
+        usage = certificate.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value
+    except Exception:
+        return False
+    return x509.ExtendedKeyUsageOID.SERVER_AUTH in usage
 
 
 async def asyncio_forever() -> None:
