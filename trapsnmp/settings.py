@@ -214,18 +214,19 @@ def save(service) -> None:
     }
     for name, password in service.opc.users.passwords.items():
         parser[f"opc.user.{name}"] = {"password": password}
-    for index, row in enumerate(service.radios.remotes, start=1):
-        section = {}
-        for key in _REMOTE_FIELDS:
-            value = row.get(key)
-            if value is None or value == "":
-                continue
-            if key == "alarmed":
-                section[key] = "true" if value else "false"
-            else:
-                section[key] = str(value)
-        if section:
-            parser[f"remote.{index}"] = section
+    for master_index, rows in enumerate(service.radios.stations, start=1):
+        for index, row in enumerate(rows, start=1):
+            section = {}
+            for key in _REMOTE_FIELDS:
+                value = row.get(key)
+                if value is None or value == "":
+                    continue
+                if key == "alarmed":
+                    section[key] = "true" if value else "false"
+                else:
+                    section[key] = str(value)
+            if section:
+                parser[f"master{master_index}.remote.{index}"] = section
     path = ini_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".ini.tmp")
@@ -367,39 +368,58 @@ def _apply(service, parser: configparser.ConfigParser) -> None:
         service._readback_reset = True
     if parser.has_section("windows"):
         service.windows_service = parser["windows"].get("enabled", "false").strip().lower() == "true"
-    remotes = []
+    loaded: list[list[dict]] = [[], [], []]
+    legacy = []
     slots = []
     for section in parser.sections():
-        if not section.startswith("remote."):
-            continue
-        try:
-            slots.append((int(section.split(".", 1)[1]), section))
-        except ValueError:
-            continue
-    for _index, section in sorted(slots):
-        item = parser[section]
-        row = {}
-        for key in _REMOTE_FIELDS:
-            if key not in item:
+        if section.startswith("master") and ".remote." in section:
+            try:
+                master_index = int(section[6 : section.index(".remote.")])
+                remote_index = int(section.rsplit(".", 1)[1])
+            except ValueError:
                 continue
-            raw = item.get(key, "")
-            if key == "alarmed":
-                row[key] = _bool(raw)
-            elif key in _REMOTE_INTS:
-                row[key] = _int(raw, 0)
-            else:
-                row[key] = raw
-        if row:
-            remotes.append(row)
-    if remotes:
-        service.radios.remotes = remotes[:_MAX_REMOTES]
-        for index, row in enumerate(service.radios.remotes, start=1):
+            if master_index not in (1, 2, 3):
+                continue
+            slots.append((master_index, remote_index, section))
+            continue
+        if section.startswith("remote."):
+            try:
+                legacy.append((int(section.split(".", 1)[1]), section))
+            except ValueError:
+                continue
+    for master_index, _remote_index, section in sorted(slots):
+        row = _remote_row(parser[section])
+        if row and len(loaded[master_index - 1]) < _MAX_REMOTES:
+            loaded[master_index - 1].append(row)
+    if not any(loaded):
+        for _index, section in sorted(legacy):
+            row = _remote_row(parser[section])
+            if row and len(loaded[0]) < _MAX_REMOTES:
+                loaded[0].append(row)
+    service.radios.stations = loaded
+    for master_index, rows in enumerate(loaded, start=1):
+        for row in rows:
             stats = {}
             for key in ("txPackets", "txBytes", "rxPackets", "rxBytes", "txError", "rxError", "txDrop", "rxDrop"):
                 if key in row:
                     stats[key] = int(row[key])
             if stats:
-                service._sine_stats[index] = stats
+                service._sine_stats[(master_index, row.get("mac") or len(service._sine_stats))] = stats
+
+
+def _remote_row(item) -> dict:
+    row = {}
+    for key in _REMOTE_FIELDS:
+        if key not in item:
+            continue
+        raw = item.get(key, "")
+        if key == "alarmed":
+            row[key] = _bool(raw)
+        elif key in _REMOTE_INTS:
+            row[key] = _int(raw, 0)
+        else:
+            row[key] = raw
+    return row
 
 
 def _apply_master(master, item) -> None:

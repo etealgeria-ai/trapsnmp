@@ -57,6 +57,9 @@ def _node_path(key: str) -> str:
     if key.startswith("Recent.") and key.count(".") >= 2:
         _folder, slot, name = key.split(".", 2)
         return f"/Objects/trapsnmp/Recent/Slot{slot}/{name}"
+    if key.startswith("Master") and key.split(".", 1)[0] in ("Master1", "Master2", "Master3") and ".Remote" in key:
+        master, remote, name = key.split(".", 2)
+        return f"/Objects/trapsnmp/Radios/{master}/{remote}/{name}"
     if key.startswith("Remote") and key[6:7].isdigit() and "." in key:
         folder, name = key.split(".", 1)
         return f"/Objects/trapsnmp/Radios/{folder}/{name}"
@@ -191,16 +194,21 @@ class OpcuaBridge:
             await add_var(radios, "Radios.Count", "Count", 0, ua.VariantType.UInt32)
             await add_var(radios, "Radios.Master", "Master", "", ua.VariantType.String)
             await add_var(radios, "Radios.Error", "Error", "", ua.VariantType.String)
-            for number in range(1, REMOTE_TAG_COUNT + 1):
-                folder = await radios.add_object(ua.NodeId(f"Remote{number}", idx), f"Remote{number}")
-                for name, kind in OPC_TAGS:
-                    await add_var(
-                        folder,
-                        f"Remote{number}.{name}",
-                        name,
-                        _TAG_INITIAL[kind],
-                        _TAG_TYPES[kind],
+            for master in range(1, 4):
+                parent = await radios.add_object(ua.NodeId(f"Master{master}", idx), f"Master{master}")
+                for number in range(1, REMOTE_TAG_COUNT + 1):
+                    folder = await parent.add_object(
+                        ua.NodeId(f"Master{master}.Remote{number}", idx),
+                        f"Remote{number}",
                     )
+                    for name, kind in OPC_TAGS:
+                        await add_var(
+                            folder,
+                            f"Master{master}.Remote{number}.{name}",
+                            name,
+                            _TAG_INITIAL[kind],
+                            _TAG_TYPES[kind],
+                        )
             await self._install_tag_nodes()
 
             event_type = await server.create_custom_event_type(
@@ -403,8 +411,17 @@ class OpcuaBridge:
             folders = ["Latest", "Gateway", "Upstream", "Recent", "Radios", "Tags"]
             keys: list[str] = []
         elif folder == "Radios":
-            folders = [f"Remote{number}" for number in range(1, REMOTE_TAG_COUNT + 1)]
+            folders = ["Master1", "Master2", "Master3"]
             keys = [key for key in self.nodes if key.startswith("Radios.")]
+        elif folder in ("Master1", "Master2", "Master3"):
+            folders = [f"Remote{number}" for number in range(1, REMOTE_TAG_COUNT + 1)]
+            keys = []
+        elif (
+            folder.startswith(("Master1.Remote", "Master2.Remote", "Master3.Remote"))
+            and folder.split(".", 1)[1][6:].isdigit()
+            and 1 <= int(folder.split(".", 1)[1][6:]) <= REMOTE_TAG_COUNT
+        ):
+            keys = [key for key in self.nodes if key.startswith(folder + ".")]
         elif folder.startswith("Remote") and folder[6:].isdigit() and 1 <= int(folder[6:]) <= REMOTE_TAG_COUNT:
             keys = [key for key in self.nodes if key.startswith(folder + ".")]
         elif folder in ("Latest", "Gateway", "Upstream", "Recent"):
@@ -413,7 +430,7 @@ class OpcuaBridge:
             keys = [
                 key
                 for key in self.nodes
-                if not key.startswith(("Latest.", "Gateway.", "Upstream.", "Recent.", "Radios.", "Remote"))
+                if not key.startswith(("Latest.", "Gateway.", "Upstream.", "Recent.", "Radios.", "Remote", "Master"))
             ]
         else:
             return {"ok": False, "error": "Unknown folder.", "folders": [], "items": []}
@@ -600,18 +617,26 @@ class OpcuaBridge:
         return written
 
     async def write_rssi_wave(self, rows: list[dict]) -> None:
+        await self.write_stations([rows, [], []])
+
+    async def write_stations(self, stations: list[list[dict]]) -> None:
         if not self.ready:
             return
+        groups = list(stations[:3])
+        while len(groups) < 3:
+            groups.append([])
+        total = sum(min(len(group), REMOTE_TAG_COUNT) for group in groups)
         try:
-            await self._write("Radios.Count", min(len(rows), REMOTE_TAG_COUNT), ua.VariantType.UInt32)
+            await self._write("Radios.Count", total, ua.VariantType.UInt32)
         except Exception:
             log.exception("radio count write failed")
-        for number, row in enumerate(rows[:REMOTE_TAG_COUNT], start=1):
-            for name, value, kind in remote_opc_values(row):
-                try:
-                    await self._write(f"Remote{number}.{name}", value, _TAG_TYPES[kind])
-                except Exception:
-                    log.exception("rssi wave write failed for Remote%s.%s", number, name)
+        for master, rows in enumerate(groups, start=1):
+            for number, row in enumerate(rows[:REMOTE_TAG_COUNT], start=1):
+                for name, value, kind in remote_opc_values(row):
+                    try:
+                        await self._write(f"Master{master}.Remote{number}.{name}", value, _TAG_TYPES[kind])
+                    except Exception:
+                        log.exception("rssi wave write failed for Master%s.Remote%s.%s", master, number, name)
 
     async def publish_radios(self, snap: dict) -> int:
         if not self.ready:
@@ -645,15 +670,22 @@ class OpcuaBridge:
                 fields.append(("DownRssi", int(down), "int"))
             for name, value, kind in fields:
                 written += await self._put_radio(key, f"Radios.{key}.{name}", name, value, kind)
-        remotes = list(snap.get("remotes") or [])
-        for number in range(1, REMOTE_TAG_COUNT + 1):
-            remote = remotes[number - 1] if number <= len(remotes) else None
-            for name, value, kind in remote_opc_values(remote):
-                try:
-                    await self._write(f"Remote{number}.{name}", value, _TAG_TYPES[kind])
-                    written += 1
-                except Exception:
-                    log.exception("remote tag write failed for Remote%s.%s", number, name)
+        stations = list(snap.get("stations") or [[], [], []])
+        while len(stations) < 3:
+            stations.append([])
+        if not any(stations) and snap.get("remotes"):
+            stations[0] = list(snap.get("remotes") or [])
+        for master, remotes in enumerate(stations[:3], start=1):
+            for number in range(1, REMOTE_TAG_COUNT + 1):
+                remote = remotes[number - 1] if number <= len(remotes) else None
+                if remote is None and number > len(remotes):
+                    continue
+                for name, value, kind in remote_opc_values(remote):
+                    try:
+                        await self._write(f"Master{master}.Remote{number}.{name}", value, _TAG_TYPES[kind])
+                        written += 1
+                    except Exception:
+                        log.exception("remote tag write failed for Master%s.Remote%s.%s", master, number, name)
         for key in list(self._radio_keys):
             if key in current:
                 continue

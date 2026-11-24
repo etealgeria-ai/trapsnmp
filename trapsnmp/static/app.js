@@ -1,4 +1,4 @@
-const state = { selected: null, sending: false, view: "monitor", opcFolder: "Latest", opcRadios: false };
+const state = { selected: null, sending: false, view: "monitor", opcFolder: "Latest", opcRadios: false, opcMaster: "" };
 
 function esc(value) {
   return String(value ?? "")
@@ -733,14 +733,19 @@ const RADIO_COLUMNS = [
 function opcTree() {
   const host = document.getElementById("opc-tree");
   if (!host) return;
-  const sig = `${state.opcFolder}|${state.opcRadios}`;
+  const sig = `${state.opcFolder}|${state.opcRadios}|${state.opcMaster}`;
   if (host.dataset.sig === sig) return;
   host.dataset.sig = sig;
   const current = state.opcFolder;
   const button = (id, label, cls) =>
     `<button type="button" class="${cls}${id === current ? " selected" : ""}" data-opc="${esc(id)}">${esc(label)}</button>`;
-  const remotes = state.opcRadios
-    ? Array.from({ length: 255 }, (_, index) => button(`Remote${index + 1}`, `Remote${index + 1}`, "remote")).join("")
+  const masters = state.opcRadios
+    ? ["Master1", "Master2", "Master3"].map((name) => {
+        const remotes = state.opcMaster === name
+          ? Array.from({ length: 255 }, (_, index) => button(`${name}.Remote${index + 1}`, `Remote${index + 1}`, "remote")).join("")
+          : "";
+        return button(name, name, "child") + remotes;
+      }).join("")
     : "";
   host.innerHTML = [
     button("trapsnmp", "trapsnmp", ""),
@@ -749,7 +754,7 @@ function opcTree() {
     button("Upstream", "Upstream", "child"),
     button("Recent", "Recent", "child"),
     button("Radios", "Radios", "child"),
-    remotes,
+    masters,
     button("Tags", "Tags", "child"),
   ].join("");
 }
@@ -799,7 +804,14 @@ document.getElementById("opc-tree")?.addEventListener("click", (event) => {
   const button = event.target.closest("[data-opc]");
   if (!button) return;
   const folder = button.dataset.opc;
-  if (folder === "Radios") state.opcRadios = !state.opcRadios;
+  if (folder === "Radios") {
+    state.opcRadios = !state.opcRadios;
+    if (!state.opcRadios) state.opcMaster = "";
+  }
+  if (folder === "Master1" || folder === "Master2" || folder === "Master3") {
+    state.opcRadios = true;
+    state.opcMaster = state.opcMaster === folder ? "" : folder;
+  }
   state.opcFolder = folder;
   refreshOpc();
 });
@@ -813,9 +825,13 @@ function renderRadios(radios) {
   const status = document.getElementById("radio-status");
   if (status) {
     const when = radios.updatedAt ? `Last poll ${radios.updatedAt}` : "Not polled yet";
+    const counts = radios.masterCounts || [];
+    const summary = ["Master1", "Master2", "Master3"]
+      .map((name, index) => `${name} ${counts[index] || 0}`)
+      .join(" · ");
     status.textContent = radios.error
       ? `${radios.error} · ${when}`
-      : `${radios.count} remote${radios.count === 1 ? "" : "s"} on ${radios.host} · ${when}`;
+      : `${summary} on ${radios.host || "no master"} · ${when}`;
   }
   const note = document.getElementById("radio-note");
   if (note) note.textContent = radios.enabled ? `Polling every ${radios.interval}s` : "";

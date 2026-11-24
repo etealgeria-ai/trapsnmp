@@ -421,7 +421,7 @@
           <p class="index">01</p>
           <h2>GE Master Station</h2>
         </div>
-        <p class="hint">Up to three LN masters. RSSI is polled from each address. Traps sent by GE Master Station 1, 2, and 3 are accepted as well, using this community. Remotes are combined into Remote1 through Remote255.</p>
+        <p class="hint">Up to three LN masters. Each one has its own OPC tags, Master1.Remote1 through Master1.Remote255, and the same for Master2 and Master3. Traps from these stations are accepted on UDP 162.</p>
         <form id="radio-form">
           <label class="field">
             <span>GE Master Station 1</span>
@@ -479,7 +479,7 @@
           <p class="index">01</p>
           <h2>Remotes</h2>
         </div>
-        <p class="hint" id="radio-status">Live values for Remote1 through Remote255, one tag per column of mIfLnStatusConnRemEntry. The page refreshes every second.</p>
+        <p class="hint" id="radio-status">Live values for Master1.Remote1 through Master3.Remote255. Each GE master station has its own 255 remotes.</p>
         <div class="table-wrap">
           <table>
             <thead>

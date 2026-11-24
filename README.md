@@ -54,7 +54,7 @@ A username token is offered as well. On the open endpoint the password is encryp
 
 ## Settings
 
-Communities, SNMPv3 users, up to three GE master addresses, the agent, tag filters, upstream OPC UA, OPC UA users, and the last remote values are stored in `data/trapsnmp.ini` and loaded on the next start. The file is mode `0600`. Set `TRAPSNMP_DATA` to choose that folder. Otherwise an existing `/workspace/data` is used, then `./data`. The private key is not written into that file. The master addresses are `[master]` `host`, `host2`, and `host3`.
+Communities, SNMPv3 users, up to three GE master addresses, the agent, tag filters, upstream OPC UA, OPC UA users, and the last remote values are stored in `data/trapsnmp.ini` and loaded on the next start. The file is mode `0600`. Set `TRAPSNMP_DATA` to choose that folder. Otherwise an existing `/workspace/data` is used, then `./data`. The private key is not written into that file. The master addresses are `[master]` `host`, `host2`, and `host3`. Each master has its own OPC UA remotes: `Master1.Remote1` through `Master1.Remote255`, and the same for `Master2` and `Master3`. A node id looks like `ns=2;s=Master1.Remote1.rssi`.
 
 The console password is `P@ssw0rd`. It is stored in `[console]` of `data/trapsnmp.ini`. Use `P@ssw0rd` to sign in. Edit that line and restart only if you want a different password. Ten wrong passwords from one address lock it out for 5 minutes. Wrong passwords are forgotten after an hour, and a sign-in lasts 12 hours.
 

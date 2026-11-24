@@ -378,7 +378,7 @@ class OrbitMaster:
         self.port = 161
         self.interval = 15
         self.enabled = False
-        self.remotes: list[dict] = []
+        self.stations: list[list[dict]] = [[], [], []]
         self.error: str | None = None
         self.updated_at = ""
         self.polling = False
@@ -411,6 +411,14 @@ class OrbitMaster:
                 return label
         return ""
 
+    @property
+    def remotes(self) -> list[dict]:
+        return [row for group in self.stations for row in group]
+
+    @remotes.setter
+    def remotes(self, rows: list[dict]) -> None:
+        self.stations[0] = list(rows)[:_MAX_REMOTES]
+
     def snapshot(self) -> dict:
         filled = [item for item in self.hosts if item]
         return {
@@ -423,7 +431,9 @@ class OrbitMaster:
             "polling": self.polling,
             "error": self.error,
             "updatedAt": self.updated_at,
-            "count": len(self.remotes),
+            "count": sum(len(group) for group in self.stations),
+            "masterCounts": [len(group) for group in self.stations],
+            "stations": self.stations,
             "remotes": self.remotes,
             "table": ENTRY,
         }
@@ -488,17 +498,19 @@ class OrbitMaster:
         async with self._lock:
             self.polling = True
             try:
-                merged: list[dict] = []
-                seen: set[str] = set()
+                stations: list[list[dict]] = [[], [], []]
                 errors: list[str] = []
-                for host in self.hosts:
-                    if not host or len(merged) >= _MAX_REMOTES:
+                for index, host in enumerate(self.hosts):
+                    if not host:
                         continue
                     try:
                         binds = await _walk(self._engine(), host, self.port, self.community)
                     except Exception as exc:
                         errors.append(f"{host}: {exc}")
+                        stations[index] = list(self.stations[index])
                         continue
+                    rows: list[dict] = []
+                    seen: set[str] = set()
                     for row in rows_from_binds(binds):
                         row["master"] = host
                         mac = str(row.get("mac") or "")
@@ -506,11 +518,12 @@ class OrbitMaster:
                             continue
                         if mac:
                             seen.add(mac)
-                        merged.append(row)
-                        if len(merged) >= _MAX_REMOTES:
+                        rows.append(row)
+                        if len(rows) >= _MAX_REMOTES:
                             break
-                if merged or not errors:
-                    self.remotes = merged
+                    stations[index] = rows
+                if any(stations) or not errors:
+                    self.stations = stations
                 error = "; ".join(errors)[:300]
                 if error != (self.error or ""):
                     if error:

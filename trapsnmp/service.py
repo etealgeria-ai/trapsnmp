@@ -204,8 +204,8 @@ class Service:
                 f"{len(kept.get('trusted') or [])} accepted, "
                 f"{len(kept.get('rejected') or [])} rejected"
             )
-        if self.radios.remotes and self.opc.ready:
-            await self.opc.write_rssi_wave(self.radios.remotes)
+        if any(self.radios.stations) and self.opc.ready:
+            await self.opc.write_stations(self.radios.stations)
         if ini_path().exists():
             self._trace(f"Loaded settings from {ini_path()}")
         if self.agent.listening:
@@ -237,17 +237,19 @@ class Service:
         snap = self.radios.snapshot()
         index = self.opc.namespace_index or 0
         slots = []
-        remotes = snap["remotes"]
-        for slot in range(1, REMOTE_TAG_COUNT + 1):
-            row = remotes[slot - 1] if slot <= len(remotes) else None
-            node = f"ns={index};s=Remote{slot}" if index else f"Remote{slot}"
-            if row is not None:
-                row["rssiNode"] = f"{node}.rssi"
-            fields = slot_fields(row)
-            fields = {key: value for key, value in fields.items() if value is not None}
-            slots.append({"tag": f"Remote{slot}", "node": node, **fields})
+        stations = snap.get("stations") or [[], [], []]
+        slots = []
+        for master, remotes in enumerate(stations, start=1):
+            for slot, row in enumerate(remotes, start=1):
+                node = f"ns={index};s=Master{master}.Remote{slot}" if index else f"Master{master}.Remote{slot}"
+                if row is not None:
+                    row["rssiNode"] = f"{node}.rssi"
+                fields = slot_fields(row)
+                fields = {key: value for key, value in fields.items() if value is not None}
+                slots.append({"tag": f"Master{master}.Remote{slot}", "node": node, **fields})
         snap["slots"] = slots
         snap.pop("remotes", None)
+        snap.pop("stations", None)
         return snap
 
     def sine_view(self) -> dict:
@@ -356,11 +358,14 @@ class Service:
             except Exception as exc:
                 self._trace(f"RSSI sine trap failed for {row['name']}: {exc}")
                 break
-        self.radios.remotes = rows
+        self.radios.stations = [rows, [dict(row) for row in rows], [dict(row) for row in rows]]
+        for master, group in enumerate(self.radios.stations, start=1):
+            for row in group:
+                row["master"] = f"GE Master Station {master}"
         self.radios.error = None
         self.radios.updated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
         if self.opc.ready:
-            await self.opc.write_rssi_wave(rows)
+            await self.opc.write_stations(self.radios.stations)
         self.persist(remotes_only=True)
 
     async def _on_radios(self, snap: dict) -> None:
