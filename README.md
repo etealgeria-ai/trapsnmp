@@ -17,7 +17,7 @@ pip install -r requirements.txt
 python -m trapsnmp
 ```
 
-- Console: `http://127.0.0.1:8080/` and `https://127.0.0.1:8080/` — sign in with password `P@ssw0rd`. The HTTPS certificate is created on first start in `data/https`. Trust it in the browser once.
+- Console: `http://127.0.0.1:8080/` and `https://127.0.0.1:8080/` — sign in with password `P@ssw0rd`
 - SNMP traps: UDP 162, or 1162 if 162 is unavailable
 - OPC UA: `opc.tcp://127.0.0.1:4840/trapsnmp/`
 - Namespace: `urn:trapsnmp:snmp`
@@ -44,7 +44,24 @@ A username token is offered as well. On the open endpoint the password is encryp
 
 Communities, SNMPv3 users, the GE master, the agent, tag filters, upstream OPC UA, OPC UA users, and the last remote values are stored in `data/trapsnmp.ini` and loaded on the next start. The file is mode `0600`. Set `TRAPSNMP_DATA` to choose that folder. Otherwise an existing `/workspace/data` is used, then `./data`. The private key is not written into that file.
 
-The console password is `P@ssw0rd`. It is stored in `[console]` of `data/trapsnmp.ini`. Use `P@ssw0rd` to sign in. Edit that line and restart only if you want a different password. Ten wrong passwords from one address lock it out for 5 minutes. Wrong passwords are forgotten after an hour, and a sign-in lasts 12 hours. Open `https://127.0.0.1:8080/` when you want the password and session cookie encrypted. Chrome shows **Not secure** until you trust `data/https/ca.crt` (also at `https://127.0.0.1:8080/ca.crt`). In an Administrator PowerShell run `certutil -addstore Root trapsnmp-ca.crt`, then restart Chrome. `http://127.0.0.1:8080/` still works on the same port.
+The console password is `P@ssw0rd`. It is stored in `[console]` of `data/trapsnmp.ini`. Use `P@ssw0rd` to sign in. Edit that line and restart only if you want a different password. Ten wrong passwords from one address lock it out for 5 minutes. Wrong passwords are forgotten after an hour, and a sign-in lasts 12 hours.
+
+## Console HTTPS
+
+`https://127.0.0.1:8080/` encrypts the password and the session cookie. `http://127.0.0.1:8080/` still works on the same port.
+
+Chrome shows **Not secure** until Windows trusts the trapsnmp authority. Allowing the warning does not turn that into a padlock. After the gateway has been started once:
+
+1. Download [https://127.0.0.1:8080/ca.crt](https://127.0.0.1:8080/ca.crt). The same file is `data/https/ca.crt`. The browser saves it as `trapsnmp-ca.crt`.
+2. Open an Administrator PowerShell in the folder where that file was saved and run:
+
+```powershell
+certutil -addstore Root trapsnmp-ca.crt
+```
+
+3. Quit Chrome completely, then open `https://127.0.0.1:8080/` again.
+
+The address bar then shows the lock. Until that authority is in Trusted Root, **Not secure** is normal. The authority certificate is valid for 15 years. The server certificate it signs is created on first start and is also valid for 15 years.
 
 The RSSI sine stays stopped at startup. Start it from the Send page. Each step is 10 seconds.
 
