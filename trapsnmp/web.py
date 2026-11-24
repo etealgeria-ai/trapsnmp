@@ -479,6 +479,7 @@ async def handle_radios(request: web.Request) -> web.Response:
             )
             service._allow_master_traps()
         if action == "poll":
+            await service.radios.poll()
     except (TypeError, ValueError) as exc:
         return _json_error(str(exc))
     except Exception as exc:
