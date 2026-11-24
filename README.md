@@ -22,11 +22,15 @@ python -m trapsnmp
 - OPC UA: `opc.tcp://127.0.0.1:4840/trapsnmp/`
 - Namespace: `urn:trapsnmp:snmp`
 
-## Windows autorun
+## Windows service
 
-After Python and the requirements are installed, right-click `windows\install-autorun.bat` and choose **Run as administrator**. Windows then starts trapsnmp about 30 seconds after boot, including when nobody is signed in. The console stays at `https://127.0.0.1:8888/`. Output is appended to `data\trapsnmp.log`.
+Yes. Right-click `windows\install-service.bat` and choose **Run as administrator**. That installs pywin32, registers a service named **trapsnmp**, and starts it. Windows starts the service at boot as Local System, before anyone signs in, and restarts it if the process exits. The console stays at `https://127.0.0.1:8888/`. Output is appended to `data\trapsnmp.log`. `services.msc` lists it as trapsnmp.
 
-`windows\remove-autorun.bat` (also as administrator) stops that. The gateway can still be started by hand with `python -m trapsnmp`.
+Stop the copy you started by hand before installing, so UDP 162 and OPC UA 4840 are free. The installer also removes the startup task from `install-autorun.bat` if that task exists, so the gateway is not started twice.
+
+`windows\remove-service.bat` (as administrator) stops and removes the service.
+
+`windows\install-autorun.bat` is only a scheduled task. Use the service instead of that task.
 
 The default SNMPv3 user is `trapsnmp`, authPriv, SHA passphrase `trapsnmp-auth`, AES passphrase `trapsnmp-priv`. Communities `public` and `private` are accepted. More communities and users can be added from the console.
 
