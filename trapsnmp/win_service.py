@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -53,7 +54,9 @@ def control(action: str) -> dict:
         if not current.get("installed"):
             return apply(True)
         _spawn([_sc(), "start", SERVICE])
-        return _pending("Starting the Windows service. This page closes if another copy is still using the ports.")
+        return _pending(
+            "Starting trapsnmp. It is not in the Windows Start menu. Press Win+R, type services.msc, and open the service named trapsnmp."
+        )
     if not current.get("installed"):
         current["detail"] = "The Windows service is not installed."
         return current
@@ -164,6 +167,7 @@ def apply(enabled: bool) -> dict:
         current = status()
         current["detail"] = "Already running as a Windows service."
         return current
+    _remember_python()
     _CACHE["value"] = None
     if _is_admin():
         subprocess.Popen(
@@ -171,16 +175,16 @@ def apply(enabled: bool) -> dict:
             cwd=str(script.parent),
         )
         detail = (
-            "Installing the service. If this window is already running trapsnmp, close it so the service can take the ports."
+            "Installing the service named trapsnmp. It will not appear in the Windows Start menu. Press Win+R, type services.msc, and look for trapsnmp. If this page is already running the gateway, close it so the service can take the ports."
             if enabled
-            else "Stopping and removing the Windows service."
+            else "Stopping and removing the Windows service named trapsnmp."
         )
     else:
         _elevate(script)
         detail = (
-            "Approve the Windows prompt to install the service. Then close this copy so the service can use the ports."
+            "Approve the Windows prompt. The service is named trapsnmp and is listed in services.msc, not in the Start menu. If the prompt was cancelled, Start does nothing."
             if enabled
-            else "Approve the Windows prompt to stop and remove the service."
+            else "Approve the Windows prompt to stop and remove the service named trapsnmp."
         )
     result = _blank(detail, supported=True)
     result["pending"] = True
@@ -206,14 +210,14 @@ def _query() -> dict:
     text = (done.stdout or "").strip().splitlines()
     line = text[-1].strip() if text else ""
     if not line or line == "missing":
-        return _blank("Not installed. Start registers the service and runs it.", supported=True)
+        return _blank(_install_note("Not installed. Start registers a service named trapsnmp. Find it in services.msc, not in the Windows Start menu."), supported=True)
     parts = line.split()
     if len(parts) != 2 or not all(part.isdigit() for part in parts):
-        return _blank("Not installed. Start registers the service and runs it.", supported=True)
+        return _blank(_install_note("Not installed. Start registers a service named trapsnmp. Find it in services.msc, not in the Windows Start menu."), supported=True)
     running = parts[0] == "4"
     automatic = parts[1] == "2"
     if running:
-        detail = "Running as a Windows service. It starts at boot."
+        detail = "Running. The service name is trapsnmp. Open it from services.msc, not from the Windows Start menu."
     elif automatic:
         detail = "Installed. It starts at boot, and it is not running yet. Press Start to run it."
     else:
@@ -255,6 +259,25 @@ def _elevate(script: Path) -> None:
         ],
         cwd=str(script.parent),
     )
+
+
+def _remember_python() -> None:
+    exe = sys.executable
+    if not exe or not os.path.isfile(exe) or exe.lower().endswith("pythonservice.exe"):
+        return
+    target = _scripts() / "python.path"
+    target.write_text(exe, encoding="ascii")
+
+
+def _install_note(detail: str) -> str:
+    log = _scripts().parent / "data" / "service-install.log"
+    try:
+        lines = [line.strip() for line in log.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip()]
+    except OSError:
+        return detail
+    if not lines:
+        return detail
+    return detail + " Last install message: " + lines[-1]
 
 
 def _ps_quote(text: str) -> str:

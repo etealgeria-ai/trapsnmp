@@ -455,7 +455,7 @@
           <p class="index">02</p>
           <h2>Windows service</h2>
         </div>
-        <p class="hint">On Windows, Start registers the service if it is missing and runs it. Stop leaves it installed. Delete stops it and removes it. Windows asks for administrator approval. The page closes if the service itself is serving it. This does nothing on Linux.</p>
+        <p class="hint">On Windows, Start registers a service named trapsnmp and runs it. It does not appear in the Windows Start menu. Press Win+R, type services.msc, and look for trapsnmp. Stop leaves it installed. Delete removes it. Windows asks for administrator approval. If that prompt is cancelled, nothing is created.</p>
         <div class="actions" id="service-form">
           <button type="button" class="primary" id="service-start">Start</button>
           <button type="button" class="ghost" id="service-stop">Stop</button>

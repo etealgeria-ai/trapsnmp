@@ -88,15 +88,19 @@ def _launch() -> subprocess.Popen:
     )
 
 
-def main() -> None:
-    try:
-        import servicemanager
-        import win32event
-        import win32service
-        import win32serviceutil
-    except ImportError:
-        sys.stderr.write("pywin32 is required. Run windows\\install-service.bat as administrator.\n")
-        raise SystemExit(1)
+try:
+    import servicemanager
+    import win32event
+    import win32service
+    import win32serviceutil
+except ImportError:
+    servicemanager = None
+    win32event = None
+    win32service = None
+    win32serviceutil = None
+
+
+if win32serviceutil is not None:
 
     class TrapsnmpService(win32serviceutil.ServiceFramework):
         _svc_name_ = SERVICE_NAME
@@ -146,12 +150,22 @@ def main() -> None:
                 time.sleep(2)
             servicemanager.LogInfoMsg("trapsnmp service stopped")
 
+
+def main() -> None:
+    if win32serviceutil is None:
+        sys.stderr.write("pywin32 is required. Run windows\\install-service.bat as administrator.\n")
+        raise SystemExit(1)
     if len(sys.argv) == 1:
         servicemanager.Initialize()
         servicemanager.PrepareToHostSingle(TrapsnmpService)
         servicemanager.StartServiceCtrlDispatcher()
-    else:
-        win32serviceutil.HandleCommandLine(TrapsnmpService)
+        return
+    # Running this file directly would record the class as __main__.TrapsnmpService,
+    # which the service host cannot import. The windows folder is on PYTHONPATH.
+    win32serviceutil.HandleCommandLine(
+        TrapsnmpService,
+        serviceClassString="trapsnmp_service.TrapsnmpService",
+    )
 
 
 if __name__ == "__main__":
