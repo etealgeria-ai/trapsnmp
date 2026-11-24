@@ -345,8 +345,36 @@ class Service:
                     **stats,
                 }
             )
+        hosts = list(self.radios.hosts)
+        while len(hosts) < 3:
+            hosts.append("")
+        stations: list[list[dict]] = []
+        for master in range(1, 4):
+            source = hosts[master - 1] or f"192.168.1.{master * 10}"
+            group = []
+            for row in rows:
+                copy = dict(row)
+                parts = str(copy["mac"]).split(":")
+                parts[3] = f"{master:02X}"
+                copy["mac"] = ":".join(parts)
+                copy["address"] = copy["mac"]
+                copy["key"] = copy["mac"].replace(":", "")
+                copy["index"] = "1." + ".".join(str(int(part, 16)) for part in copy["mac"].split(":"))
+                copy["oid"] = f"{ENTRY}.6.{copy['index']}"
+                octets = str(copy["ip"]).split(".")
+                if len(octets) == 4:
+                    octets[1] = str(master)
+                    copy["ip"] = ".".join(octets)
+                    copy["allIp"] = copy["ip"]
+                shift = (master - 1) * 3
+                copy["rssi"] = max(-110, min(-40, int(copy["rssi"]) - shift))
+                copy["downRssi"] = max(-110, min(-40, int(copy["downRssi"]) - shift))
+                copy["master"] = source
+                copy["source"] = source
+                group.append(copy)
+            stations.append(group)
         loop = asyncio.get_running_loop()
-        for row in rows:
+        for row in stations[0]:
             give_up = loop.time() + _SINE_BACKLOG_WAIT
             while self.snmp.in_flight >= self.snmp.max_in_flight // 2 and loop.time() < give_up:
                 await asyncio.sleep(0.01)
@@ -360,9 +388,7 @@ class Service:
             except Exception as exc:
                 self._trace(f"RSSI sine trap failed for {row['name']}: {exc}")
                 break
-        self.radios.stations[0] = rows
-        for row in self.radios.stations[0]:
-            row["master"] = self.radios.hosts[0] or "192.168.1.10"
+        self.radios.stations = stations
         self.radios.error = None
         self.radios.updated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
         if self.opc.ready:
