@@ -44,7 +44,7 @@ A username token is offered as well. On the open endpoint the password is encryp
 
 Communities, SNMPv3 users, the GE master, the agent, tag filters, upstream OPC UA, OPC UA users, and the last remote values are stored in `data/trapsnmp.ini` and loaded on the next start. The file is mode `0600`. Set `TRAPSNMP_DATA` to choose that folder. Otherwise an existing `/workspace/data` is used, then `./data`. The private key is not written into that file.
 
-The console password is `P@ssw0rd`. It is stored in `[console]` of `data/trapsnmp.ini`. Use `P@ssw0rd` to sign in. Edit that line and restart only if you want a different password. Ten wrong passwords from one address lock it out for 5 minutes. Wrong passwords are forgotten after an hour, and a sign-in lasts 12 hours. Open `https://127.0.0.1:8080/` when you want the password and session cookie encrypted. The certificate is self-signed, so the browser asks you to trust it once. `http://127.0.0.1:8080/` still works on the same port.
+The console password is `P@ssw0rd`. It is stored in `[console]` of `data/trapsnmp.ini`. Use `P@ssw0rd` to sign in. Edit that line and restart only if you want a different password. Ten wrong passwords from one address lock it out for 5 minutes. Wrong passwords are forgotten after an hour, and a sign-in lasts 12 hours. Open `https://127.0.0.1:8080/` when you want the password and session cookie encrypted. Chrome shows **Not secure** until you trust `data/https/ca.crt` (also at `https://127.0.0.1:8080/ca.crt`). In an Administrator PowerShell run `certutil -addstore Root trapsnmp-ca.crt`, then restart Chrome. `http://127.0.0.1:8080/` still works on the same port.
 
 The RSSI sine stays stopped at startup. Start it from the Send page. Each step is 10 seconds.
 

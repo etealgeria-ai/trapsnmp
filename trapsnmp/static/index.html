@@ -615,7 +615,7 @@
         </label>
         <button type="submit" class="primary">Sign in</button>
         <p class="note" id="login-error"></p>
-        <p class="hint">Open https://127.0.0.1:8080/ for HTTPS. The certificate is self-signed, so the browser says the connection is not private: choose Advanced, then continue. http://127.0.0.1:8080/ still works.</p>
+        <p class="hint">Chrome says Not secure until Windows trusts the trapsnmp authority. Download <a href="/ca.crt">trapsnmp-ca.crt</a>, then in an Administrator PowerShell run <span class="mono">certutil -addstore Root trapsnmp-ca.crt</span> and restart Chrome.</p>
       </form>
     </div>
     <script src="/static/app.js"></script>

@@ -91,7 +91,7 @@ def _password_ok(got: str, expected: str) -> bool:
 
 def _open_path(request: web.Request) -> bool:
     if request.method == "GET" and (
-        request.path in ("/", "/favicon.svg") or request.path.startswith("/static/")
+        request.path in ("/", "/favicon.svg", "/ca.crt") or request.path.startswith("/static/")
     ):
         return True
     return request.method == "POST" and request.path == "/api/login"
@@ -189,6 +189,17 @@ async def handle_logout(request: web.Request) -> web.Response:
     response = web.json_response({"ok": True})
     response.del_cookie(_COOKIE, path="/")
     return response
+
+
+async def handle_ca(_request: web.Request) -> web.Response:
+    path = data_dir() / "https" / "ca.crt"
+    if not path.is_file():
+        return web.Response(status=404, text="Certificate is not ready yet.")
+    return web.Response(
+        body=path.read_bytes(),
+        content_type="application/x-x509-ca-cert",
+        headers={"Content-Disposition": 'attachment; filename="trapsnmp-ca.crt"'},
+    )
 
 
 async def handle_index(_request: web.Request) -> web.Response:
@@ -483,6 +494,7 @@ async def serve(service: Service) -> None:
     app["sessions"] = {}
     app["login_failures"] = {}
     app.router.add_get("/", handle_index)
+    app.router.add_get("/ca.crt", handle_ca)
     app.router.add_get("/favicon.svg", handle_favicon)
     app.router.add_post("/api/login", handle_login)
     app.router.add_post("/api/logout", handle_logout)
@@ -555,59 +567,6 @@ async def _hand_console(loop, client: socket.socket, factory, ssl_context: ssl.S
             client.close()
         except Exception:
             pass
-    """Serve HTTP and HTTPS on the same port. TLS starts with 0x16; HTTP does not."""
-
-    def __init__(self, factory, ssl_context: ssl.SSLContext) -> None:
-        self.factory = factory
-        self.ssl_context = ssl_context
-        self.transport = None
-        self._switched = False
-
-    def connection_made(self, transport) -> None:
-        self.transport = transport
-
-    def data_received(self, data: bytes) -> None:
-        if self._switched or self.transport is None:
-            return
-        self._switched = True
-        self.transport.pause_reading()
-        if data[:1] == b"\x16":
-            asyncio.get_running_loop().create_task(self._tls(data))
-            return
-        proto = self.factory()
-        proto.connection_made(self.transport)
-        self.transport.set_protocol(proto)
-        proto.data_received(data)
-        self.transport.resume_reading()
-
-    async def _tls(self, data: bytes) -> None:
-        loop = asyncio.get_running_loop()
-        transport = self.transport
-        inner = self.factory()
-        waiter = loop.create_future()
-        ssl_protocol = asyncio.sslproto.SSLProtocol(
-            loop,
-            inner,
-            self.ssl_context,
-            waiter,
-            server_side=True,
-            ssl_handshake_timeout=30,
-        )
-        try:
-            transport.set_protocol(ssl_protocol)
-            ssl_protocol.connection_made(transport)
-            ssl_protocol.data_received(data)
-            transport.resume_reading()
-            await waiter
-        except Exception:
-            log.warning("HTTPS handshake failed")
-            try:
-                transport.close()
-            except Exception:
-                pass
-
-    def connection_lost(self, exc) -> None:
-        return None
 
 
 def _console_ssl() -> ssl.SSLContext:
@@ -629,6 +588,8 @@ def _console_ssl() -> ssl.SSLContext:
 
 
 def _write_console_cert(cert_file: Path, key_file: Path) -> None:
+    folder = cert_file.parent
+    ca_key, ca_cert = _console_ca(folder)
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     names = [x509.DNSName("localhost")]
     addresses = [ipaddress.IPv4Address("127.0.0.1")]
@@ -646,8 +607,8 @@ def _write_console_cert(cert_file: Path, key_file: Path) -> None:
     now = datetime.now(timezone.utc)
     certificate = (
         x509.CertificateBuilder()
-        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "trapsnmp")]))
-        .issuer_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "trapsnmp")]))
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "127.0.0.1")]))
+        .issuer_name(ca_cert.subject)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - timedelta(minutes=5))
@@ -669,7 +630,9 @@ def _write_console_cert(cert_file: Path, key_file: Path) -> None:
         )
         .add_extension(x509.ExtendedKeyUsage([x509.ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
         .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
-        .sign(key, hashes.SHA256())
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False)
+        .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()), critical=False)
+        .sign(ca_key, hashes.SHA256())
     )
     descriptor = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(descriptor, "wb") as handle:
@@ -683,13 +646,65 @@ def _write_console_cert(cert_file: Path, key_file: Path) -> None:
     cert_file.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
 
 
+def _console_ca(folder: Path):
+    key_file = folder / "ca.key"
+    cert_file = folder / "ca.crt"
+    if key_file.is_file() and cert_file.is_file():
+        key = serialization.load_pem_private_key(key_file.read_bytes(), password=None)
+        return key, x509.load_pem_x509_certificate(cert_file.read_bytes())
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([
+        x509.NameAttribute(NameOID.COMMON_NAME, "trapsnmp console"),
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "trapsnmp"),
+    ])
+    now = datetime.now(timezone.utc)
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=5))
+        .not_valid_after(now + timedelta(days=15 * 365))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=True,
+                key_encipherment=False,
+                content_commitment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=True,
+                crl_sign=True,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False)
+        .sign(key, hashes.SHA256())
+    )
+    descriptor = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "wb") as handle:
+        handle.write(
+            key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
+        )
+    cert_file.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+    return key, certificate
+
+
 def _cert_is_server(path: Path) -> bool:
     try:
         certificate = x509.load_pem_x509_certificate(path.read_bytes())
         usage = certificate.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value
+        authority = x509.load_pem_x509_certificate((path.parent / "ca.crt").read_bytes())
     except Exception:
         return False
-    return x509.ExtendedKeyUsageOID.SERVER_AUTH in usage
+    return x509.ExtendedKeyUsageOID.SERVER_AUTH in usage and certificate.issuer == authority.subject
 
 
 async def asyncio_forever() -> None:
