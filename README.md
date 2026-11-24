@@ -22,6 +22,12 @@ python -m trapsnmp
 - OPC UA: `opc.tcp://127.0.0.1:4840/trapsnmp/`
 - Namespace: `urn:trapsnmp:snmp`
 
+## Windows autorun
+
+After Python and the requirements are installed, right-click `windows\install-autorun.bat` and choose **Run as administrator**. Windows then starts trapsnmp about 30 seconds after boot, including when nobody is signed in. The console stays at `https://127.0.0.1:8888/`. Output is appended to `data\trapsnmp.log`.
+
+`windows\remove-autorun.bat` (also as administrator) stops that. The gateway can still be started by hand with `python -m trapsnmp`.
+
 The default SNMPv3 user is `trapsnmp`, authPriv, SHA passphrase `trapsnmp-auth`, AES passphrase `trapsnmp-priv`. Communities `public` and `private` are accepted. More communities and users can be added from the console.
 
 Each trap is written under `Objects/trapsnmp` (`Latest.*`, recent slots, gateway counters) and raised as `SnmpTrapEvent`. The trap-tag driver also latches `TRAP_V1` / `TRAP_V2C` Booleans, fills each tag's virtual table, and queues the message at `EVENTS_001`. Write false to a Boolean to arm the next change. An optional upstream client can also write the trap JSON to another OPC UA node.
