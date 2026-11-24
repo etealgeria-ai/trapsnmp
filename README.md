@@ -62,9 +62,9 @@ The console password is `P@ssw0rd`. It is stored in `[console]` of `data/trapsnm
 
 `https://127.0.0.1:8888/` encrypts the password and the session cookie. `http://127.0.0.1:8888/` still works on the same port. If 8888 is also taken, set `TRAPSNMP_PORT` or `[console] port` and restart.
 
-Chrome shows **Not secure** until Windows trusts the trapsnmp authority. Allowing the warning, or double-clicking the certificate into the wrong store, does not turn that into a padlock.
+Chrome shows **Not secure** until Windows trusts the trapsnmp authority. Allowing the warning does not turn that into a padlock, and Chrome blocks `https://127.0.0.1:8888/trust-windows.bat` while the certificate is still untrusted.
 
-1. Open `https://127.0.0.1:8888/trust-windows.bat` and save the file. The sign-in page has the same link.
+1. Open [http://127.0.0.1:8888/trust-windows.bat](http://127.0.0.1:8888/trust-windows.bat) and save the file. Use **http**, not https.
 2. Right-click `trust-windows.bat` and choose **Run as administrator**. It puts the trapsnmp authority in Trusted Root Certification Authorities.
 3. Quit Chrome completely. Closing the tab is not enough. Then open `https://127.0.0.1:8888/` again.
 

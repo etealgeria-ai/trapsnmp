@@ -206,17 +206,28 @@ async def handle_ca(request: web.Request) -> web.Response:
     )
 
 
-async def handle_trust_bat(_request: web.Request) -> web.Response:
+async def handle_trust_bat(request: web.Request) -> web.Response:
     folder = data_dir() / "https"
     cer = folder / "ca.cer"
     if not cer.is_file():
         crt = folder / "ca.crt"
         if not crt.is_file():
-            return web.Response(status=404, text="Certificate is not ready yet.")
+            return web.Response(status=404, text="Certificate is not ready yet. Start trapsnmp once, then download this again.")
         loaded = x509.load_pem_x509_certificate(crt.read_bytes())
         cer.write_bytes(loaded.public_bytes(serialization.Encoding.DER))
-    encoded = base64.b64encode(cer.read_bytes()).decode("ascii")
-    lines = [encoded[index : index + 64] for index in range(0, len(encoded), 64)]
+    port = request.url.port or 8888
+    der = base64.b64encode(cer.read_bytes()).decode("ascii")
+    script = (
+        "$cer = Join-Path $env:TEMP 'trapsnmp-ca.cer'\n"
+        f"[IO.File]::WriteAllBytes($cer, [Convert]::FromBase64String('{der}'))\n"
+        "Write-Host 'Adding the trapsnmp authority for this user'\n"
+        "certutil -user -addstore Root $cer\n"
+        "Write-Host 'Adding the trapsnmp authority for every user'\n"
+        "certutil -addstore Root $cer\n"
+        f"Write-Host 'Quit Chrome completely, then open https://127.0.0.1:{port}/'\n"
+        "Write-Host 'Closing one tab is not enough.'\n"
+    )
+    encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
     body = "\r\n".join(
         [
             "@echo off",
@@ -225,29 +236,9 @@ async def handle_trust_bat(_request: web.Request) -> web.Response:
             "  powershell -NoProfile -Command \"Start-Process -FilePath '%~f0' -Verb RunAs\"",
             "  exit /b",
             ")",
-            "set \"B64=%TEMP%\\trapsnmp-ca.b64\"",
-            "set \"CER=%TEMP%\\trapsnmp-ca.cer\"",
-            "> \"%B64%\" (",
-            "echo -----BEGIN CERTIFICATE-----",
-            *[f"echo {line}" for line in lines],
-            "echo -----END CERTIFICATE-----",
-            ")",
-            "certutil -decode \"%B64%\" \"%CER%\"",
-            "if errorlevel 1 (",
-            "  echo Could not decode the authority.",
-            "  pause",
-            "  exit /b 1",
-            ")",
-            "certutil -addstore Root \"%CER%\"",
-            "if errorlevel 1 (",
-            "  echo Could not add the authority to Trusted Root.",
-            "  pause",
-            "  exit /b 1",
-            ")",
+            "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand " + encoded,
             "echo.",
-            "echo Windows now trusts the trapsnmp console.",
-            "echo Quit Chrome completely, then open https://127.0.0.1:8888/ again.",
-            "echo Closing one tab is not enough.",
+            "echo If certutil reported an error above, the authority was not trusted.",
             "pause",
             "",
         ]
@@ -255,7 +246,10 @@ async def handle_trust_bat(_request: web.Request) -> web.Response:
     return web.Response(
         body=body.encode("ascii"),
         content_type="application/octet-stream",
-        headers={"Content-Disposition": 'attachment; filename="trust-windows.bat"'},
+        headers={
+            "Content-Disposition": 'attachment; filename="trust-windows.bat"',
+            "Cache-Control": "no-store",
+        },
     )
 
 
