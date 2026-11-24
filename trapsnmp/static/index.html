@@ -423,18 +423,36 @@
         </div>
         <p class="hint">GE Master Station 1, 2, and 3 are separate trap sources. A trap from 192.168.1.10 updates Master1 only. A trap from 192.168.1.20 updates Master2 only. A trap from 192.168.1.30 updates Master3 only.</p>
         <form id="radio-form">
-          <label class="field">
-            <span>GE Master Station 1</span>
-            <input name="host" spellcheck="false" value="192.168.1.10" required />
-          </label>
-          <label class="field">
-            <span>GE Master Station 2</span>
-            <input name="host2" spellcheck="false" value="192.168.1.20" />
-          </label>
-          <label class="field">
-            <span>GE Master Station 3</span>
-            <input name="host3" spellcheck="false" value="192.168.1.30" />
-          </label>
+          <div class="split">
+            <label class="field">
+              <span>GE Master Station 1</span>
+              <input name="host" spellcheck="false" value="192.168.1.10" required />
+            </label>
+            <div class="actions">
+              <button type="button" class="ghost" data-master-toggle="0" data-on="0">Activate</button>
+            </div>
+          </div>
+          <p class="note" id="master-state-1">Stopped</p>
+          <div class="split">
+            <label class="field">
+              <span>GE Master Station 2</span>
+              <input name="host2" spellcheck="false" value="192.168.1.20" />
+            </label>
+            <div class="actions">
+              <button type="button" class="ghost" data-master-toggle="1" data-on="0">Activate</button>
+            </div>
+          </div>
+          <p class="note" id="master-state-2">Stopped</p>
+          <div class="split">
+            <label class="field">
+              <span>GE Master Station 3</span>
+              <input name="host3" spellcheck="false" value="192.168.1.30" />
+            </label>
+            <div class="actions">
+              <button type="button" class="ghost" data-master-toggle="2" data-on="0">Activate</button>
+            </div>
+          </div>
+          <p class="note" id="master-state-3">Stopped</p>
           <label class="field">
             <span>Community</span>
             <input name="community" spellcheck="false" value="public" required />
@@ -446,10 +464,6 @@
           <label class="field">
             <span>Poll every (seconds)</span>
             <input name="interval" type="number" min="5" max="300" value="15" />
-          </label>
-          <label class="checkline">
-            <input name="enabled" type="checkbox" />
-            <span>Keep polling</span>
           </label>
           <div class="actions">
             <button type="submit" class="primary" name="intent" value="save">Save</button>

@@ -171,6 +171,9 @@ def save(service) -> None:
         "port": str(master.port),
         "interval": str(master.interval),
         "enabled": "true" if master.enabled else "false",
+        "active": "true" if master.active[0] else "false",
+        "active2": "true" if len(master.active) > 1 and master.active[1] else "false",
+        "active3": "true" if len(master.active) > 2 and master.active[2] else "false",
     }
     parser["tags"] = {
         "community": service.tags.community,
@@ -449,5 +452,16 @@ def _apply_master(master, item) -> None:
         master.port = port
     if 5 <= interval <= 300:
         master.interval = interval
-    if "enabled" in item:
+    if any(key in item for key in ("active", "active2", "active3")):
+        flags = list(master.active)
+        while len(flags) < 3:
+            flags.append(False)
+        if "active" in item:
+            flags[0] = _bool(str(item.get("active")))
+        if "active2" in item:
+            flags[1] = _bool(str(item.get("active2")))
+        if "active3" in item:
+            flags[2] = _bool(str(item.get("active3")))
+        master.active = flags[:3]
+    elif "enabled" in item:
         master.enabled = _bool(str(item.get("enabled")))

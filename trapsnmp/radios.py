@@ -377,7 +377,7 @@ class OrbitMaster:
         self.community = "public"
         self.port = 161
         self.interval = 15
-        self.enabled = False
+        self.active = [False, False, False]
         self.stations: list[list[dict]] = [[], [], []]
         self.error: str | None = None
         self.updated_at = ""
@@ -421,7 +421,7 @@ class OrbitMaster:
     def apply_trap(self, source: str, binds: list[tuple[str, object]]) -> tuple[int, list[tuple[int, dict]]] | None:
         """Update one master from a trap. The source IP selects the master."""
         index = self.station_index(source)
-        if index is None:
+        if index is None or not self.active[index]:
             return None
         incoming = rows_from_binds([(str(oid).lstrip("."), value) for oid, value in binds])
         if not incoming:
@@ -451,6 +451,14 @@ class OrbitMaster:
         return index + 1, changed
 
     @property
+    def enabled(self) -> bool:
+        return any(self.active)
+
+    @enabled.setter
+    def enabled(self, value: bool) -> None:
+        self.active = [bool(value), bool(value), bool(value)]
+
+    @property
     def remotes(self) -> list[dict]:
         return [row for group in self.stations for row in group]
 
@@ -467,6 +475,7 @@ class OrbitMaster:
             "port": self.port,
             "interval": self.interval,
             "enabled": self.enabled,
+            "active": list(self.active),
             "polling": self.polling,
             "error": self.error,
             "updatedAt": self.updated_at,
@@ -487,6 +496,7 @@ class OrbitMaster:
         port: int,
         interval: int,
         enabled: bool,
+        active: list[bool] | None = None,
     ) -> None:
         hosts = [
             _master_address(host, required=True),
@@ -507,7 +517,23 @@ class OrbitMaster:
         self.community = community
         self.port = int(port)
         self.interval = int(interval)
-        self.enabled = bool(enabled)
+        if active is None:
+            self.enabled = bool(enabled)
+        else:
+            flags = [bool(item) for item in list(active)[:3]]
+            while len(flags) < 3:
+                flags.append(False)
+            self.active = flags
+        self._save()
+        self._ensure_loop()
+
+    def set_active(self, index: int, enabled: bool) -> None:
+        if not 0 <= int(index) <= 2:
+            raise ValueError("Choose GE Master Station 1, 2, or 3.")
+        index = int(index)
+        if enabled and not self.hosts[index]:
+            raise ValueError("Enter an address before activating this station.")
+        self.active[index] = bool(enabled)
         self._save()
         self._ensure_loop()
 
@@ -540,7 +566,7 @@ class OrbitMaster:
                 stations: list[list[dict]] = [[], [], []]
                 errors: list[str] = []
                 for index, host in enumerate(self.hosts):
-                    if not host:
+                    if not host or not self.active[index]:
                         continue
                     try:
                         binds = await _walk(self._engine(), host, self.port, self.community)

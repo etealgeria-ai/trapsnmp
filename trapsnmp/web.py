@@ -467,7 +467,11 @@ async def handle_radios(request: web.Request) -> web.Response:
         return _json_error("Expected a JSON object.")
     action = str(body.get("action") or "save")
     try:
-        if action in ("save", "poll"):
+        if action == "station":
+            service.radios.set_active(int(body.get("index")), bool(body.get("active")))
+        elif action in ("save", "poll"):
+            raw_active = body.get("active")
+            active = raw_active if isinstance(raw_active, list) else None
             service.radios.configure(
                 host=str(body.get("host") or ""),
                 host2=str(body.get("host2") or ""),
@@ -476,6 +480,7 @@ async def handle_radios(request: web.Request) -> web.Response:
                 port=int(body.get("port") or 161),
                 interval=int(body.get("interval") or 15),
                 enabled=bool(body.get("enabled")),
+                active=active,
             )
             service._allow_master_traps()
         if action == "poll":

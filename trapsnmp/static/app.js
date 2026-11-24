@@ -867,7 +867,18 @@ function renderRadios(radios) {
     form.elements.community.value = radios.community || "public";
     form.elements.port.value = radios.port || 161;
     form.elements.interval.value = radios.interval || 15;
-    form.elements.enabled.checked = !!radios.enabled;
+  }
+  const active = radios.active || [false, false, false];
+  for (let index = 0; index < 3; index += 1) {
+    const button = document.querySelector(`[data-master-toggle="${index}"]`);
+    const note = document.getElementById(`master-state-${index + 1}`);
+    const on = !!active[index];
+    if (button) {
+      button.dataset.on = on ? "1" : "0";
+      button.textContent = on ? "Deactivate" : "Activate";
+      button.classList.toggle("primary", !on);
+    }
+    if (note) note.textContent = on ? "Active" : "Stopped";
   }
 }
 
@@ -876,6 +887,26 @@ document.getElementById("radio-tabs")?.addEventListener("click", (event) => {
   if (!button) return;
   state.radioTab = button.dataset.radioTab;
   if (state.view === "radios") tick();
+});
+
+document.getElementById("radio-form")?.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-master-toggle]");
+  if (!button) return;
+  const index = Number(button.dataset.masterToggle);
+  const turningOn = button.dataset.on !== "1";
+  try {
+    const response = await fetch("/api/radios", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "station", index, active: turningOn }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || "Could not change the station");
+    setBench(turningOn ? `GE Master Station ${index + 1} activated.` : `GE Master Station ${index + 1} deactivated.`);
+    await tick();
+  } catch (err) {
+    setBench(err.message, true);
+  }
 });
 
 document.getElementById("radio-form")?.addEventListener("submit", async (event) => {
@@ -894,7 +925,7 @@ document.getElementById("radio-form")?.addEventListener("submit", async (event) 
         community: form.elements.community.value,
         port: Number(form.elements.port.value),
         interval: Number(form.elements.interval.value),
-        enabled: form.elements.enabled.checked,
+        active: [0, 1, 2].map((index) => document.querySelector(`[data-master-toggle="${index}"]`)?.dataset.on === "1"),
       }),
     });
     const body = await response.json().catch(() => ({}));
