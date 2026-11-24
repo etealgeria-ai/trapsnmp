@@ -85,6 +85,7 @@ class OpcuaBridge:
         self._forward_pause_until = 0.0
         self._forward_pause_reason = ""
         self._read_lock = asyncio.Lock()
+        self.readback_enabled = True
         self._tag_store = None
         self._tags_parent = None
         self._radios_parent = None
@@ -212,6 +213,8 @@ class OpcuaBridge:
         self.ready = True
         self.error = None
         log.info("OPC UA server at %s (ns=%s)", self.endpoint, idx)
+        if not self.readback_enabled:
+            return
         try:
             await self._connect_reader()
         except Exception as exc:
@@ -284,11 +287,26 @@ class OpcuaBridge:
             result["upstream"] = await self._forward(trap)
         return result
 
-    async def readback(self) -> dict:
-        if not self.ready:
-            return {"ok": False, "error": self.error or "OPC UA server is not running"}
+    async def set_readback(self, enabled: bool) -> None:
         async with self._read_lock:
-            return await self._readback()
+            self.readback_enabled = bool(enabled)
+            if not self.readback_enabled:
+                await self._drop_reader()
+                return
+            if self.ready and self._reader is None:
+                await self._connect_reader()
+
+    async def readback(self) -> dict:
+        if not self.readback_enabled:
+            return {"ok": False, "enabled": False, "error": "Internal readback is off"}
+        if not self.ready:
+            return {"ok": False, "enabled": True, "error": self.error or "OPC UA server is not running"}
+        async with self._read_lock:
+            if not self.readback_enabled:
+                return {"ok": False, "enabled": False, "error": "Internal readback is off"}
+            result = await self._readback()
+        result["enabled"] = True
+        return result
 
     async def _readback(self) -> dict:
         keys = (
@@ -666,9 +684,11 @@ class OpcuaBridge:
         self._server.set_attribute_value_setter(node.nodeid, setter)
 
     async def read_tag(self, address: str):
-        if not self.ready or address not in self.node_ids:
+        if not self.ready or not self.readback_enabled or address not in self.node_ids:
             return None
         async with self._read_lock:
+            if not self.readback_enabled:
+                return None
             if self._reader is None:
                 await self._connect_reader()
             node = self._reader.get_node(self.node_ids[address])

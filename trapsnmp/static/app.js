@@ -105,6 +105,18 @@ function render(data) {
   renderUsers(snmp.users || []);
 
   document.getElementById("opc-endpoint").textContent = opc.ready ? opc.endpoint : (opc.error || "Starting");
+  const readbackOn = opc.readback !== false;
+  const readbackButton = document.getElementById("readback-toggle");
+  const readbackState = document.getElementById("readback-state");
+  if (readbackButton) {
+    readbackButton.dataset.on = readbackOn ? "1" : "0";
+    readbackButton.textContent = readbackOn ? "Deactivate" : "Activate";
+  }
+  if (readbackState) {
+    readbackState.textContent = readbackOn
+      ? "Internal anonymous session is on"
+      : "Internal anonymous session is off";
+  }
   document.getElementById("opc-ns").textContent = opc.namespace || "urn:trapsnmp:snmp";
   document.getElementById("opc-node").textContent = opc.nodes?.trapOid || "—";
   document.getElementById("opc-object").textContent = opc.nodes?.object || "—";
@@ -207,9 +219,11 @@ function renderDiag(data) {
     check(losses.length ? "warn" : "pass", "Lost traps", losses.length ? losses.map(([n, why]) => `${n} ${why}`).join(" · ") : "None dropped or rejected"),
     check(opc.ready, "OPC UA server", opc.ready ? `${opc.endpoint} · ${opc.security}` : (opc.error || "Starting")),
     check(data.agent?.listening, "SNMP agent", data.agent?.listening ? `UDP ${data.agent.port} · ${data.agent.objectId}` : (data.agent?.error || "Not listening")),
-    check(readback.ok, "Client read", readback.ok ? "Latest read succeeded" : (readback.error || "No read")),
+    check(readback.enabled === false ? "warn" : readback.ok, "Client read", readback.enabled === false ? "Internal readback is off" : (readback.ok ? "Latest read succeeded" : (readback.error || "No read"))),
   ];
-  if (last && readback.ok) {
+  if (readback.enabled === false) {
+    rows.push(check("warn", "Latest node", "Internal readback is off"));
+  } else if (last && readback.ok) {
     const matched = readback.trapOid === last.trapOid;
     rows.push(check(matched, "Latest node", matched ? last.trapName : `Read ${readback.trapOid || "empty"}`));
   } else {
@@ -543,6 +557,19 @@ document.getElementById("use-inbox").addEventListener("click", () => {
   if (!data?.opcua) return;
   document.getElementById("up-endpoint").value = data.opcua.endpoint || "";
   document.getElementById("up-node").value = data.opcua.nodes?.inbox || "";
+});
+
+document.getElementById("readback-toggle")?.addEventListener("click", async () => {
+  const button = document.getElementById("readback-toggle");
+  button.disabled = true;
+  try {
+    await post("/api/readback", { enabled: button.dataset.on !== "1" });
+    await tick();
+  } catch (err) {
+    setBench(err.message, true);
+  } finally {
+    button.disabled = false;
+  }
 });
 
 document.getElementById("opc-user-form")?.addEventListener("submit", async (event) => {

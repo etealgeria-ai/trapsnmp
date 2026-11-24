@@ -380,6 +380,7 @@ class Service:
                 "namespaceIndex": self.opc.namespace_index,
                 "security": "None and current secure profiles",
                 "identity": "anonymous",
+                "readback": self.opc.readback_enabled,
                 "certificate": self.opc.security_summary(),
                 "eventType": "SnmpTrapEvent",
                 "eventCount": self.opc.event_count,
@@ -468,12 +469,15 @@ class Service:
                     "SnmpTrapEvent fired" if published.get("event") else "No event",
                 )
                 readback = await self.opc.readback()
-                matched = bool(readback.get("ok") and readback.get("trapOid") == record.get("trapOid"))
-                step(
-                    "Readback",
-                    matched,
-                    readback.get("trapName") or readback.get("error") or "Empty read",
-                )
+                if not self.opc.readback_enabled:
+                    step("Readback", True, "Skipped. The internal readback session is off.", skipped=True)
+                else:
+                    matched = bool(readback.get("ok") and readback.get("trapOid") == record.get("trapOid"))
+                    step(
+                        "Readback",
+                        matched,
+                        readback.get("trapName") or readback.get("error") or "Empty read",
+                    )
         if self.agent.listening:
             try:
                 descr = await self.agent.read_object("1.3.6.1.2.1.1.1.0")
@@ -489,7 +493,10 @@ class Service:
                 )
         else:
             step("SNMP agent", False, self.agent.error or "Not listening")
-        if self.opc.ready and (self.tags.community or self.tags.device_ip):
+        if self.opc.ready and not self.opc.readback_enabled:
+            step("Trap tag", True, "Skipped. The internal readback session is off.", skipped=True)
+            step("Events queue", True, "Skipped. The internal readback session is off.", skipped=True)
+        elif self.opc.ready and (self.tags.community or self.tags.device_ip):
             parts = []
             if self.tags.community:
                 parts.append(f"community {self.tags.community}")

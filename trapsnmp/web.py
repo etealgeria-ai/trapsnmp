@@ -229,6 +229,22 @@ async def handle_pki(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "certificate": summary})
 
 
+async def handle_readback(request: web.Request) -> web.Response:
+    service: Service = request.app["service"]
+    try:
+        body = await request.json()
+    except Exception:
+        return _json_error("Expected JSON.")
+    if not isinstance(body, dict) or not isinstance(body.get("enabled"), bool):
+        return _json_error("Expected enabled true or false.")
+    try:
+        await service.opc.set_readback(body["enabled"])
+    except Exception as exc:
+        return _json_error(str(exc) or "Could not change the internal session.")
+    service.persist()
+    return web.json_response({"ok": True, "enabled": service.opc.readback_enabled})
+
+
 async def handle_opc(request: web.Request) -> web.Response:
     service: Service = request.app["service"]
     folder = request.query.get("folder", "Latest")
@@ -462,7 +478,7 @@ async def serve(service: Service) -> None:
     app.router.add_post("/api/tags", handle_tags)
     app.router.add_post("/api/radios", handle_radios)
     app.router.add_post("/api/sine", handle_sine)
-    app.router.add_post("/api/upstream", handle_upstream)
+    app.router.add_post("/api/readback", handle_readback)
     app.router.add_static("/static", STATIC, show_index=False)
     runner = web.AppRunner(app)
     await runner.setup()

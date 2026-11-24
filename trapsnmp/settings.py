@@ -202,6 +202,7 @@ def save(service) -> None:
         }
     parser["console"] = {"password": getattr(service, "console_password", "") or "P@ssw0rd"}
     parser["sine"] = {"enabled": "true" if service._sine_on else "false"}
+    parser["readback"] = {"enabled": "true" if service.opc.readback_enabled else "false"}
     for name, password in service.opc.users.passwords.items():
         parser[f"opc.user.{name}"] = {"password": password}
     for index, row in enumerate(service.radios.remotes, start=1):
@@ -347,6 +348,8 @@ def _apply(service, parser: configparser.ConfigParser) -> None:
                 opc_users[section[len("opc.user.") :]] = password
     if opc_users:
         service.opc.users.passwords = opc_users
+    if parser.has_section("readback"):
+        service.opc.readback_enabled = parser["readback"].get("enabled", "true").strip().lower() == "true"
     remotes = []
     slots = []
     for section in parser.sections():

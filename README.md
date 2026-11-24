@@ -1,8 +1,8 @@
-byGrokAI
+Software made by GrokAI
 
 # trapsnmp
 
-Comments in this README were made by Grok.
+Comments in this README were made by ClaudeAI.
 
 Python gateway that receives SNMP traps and informs, then publishes each one as OPC UA variables and a `SnmpTrapEvent`.
 
