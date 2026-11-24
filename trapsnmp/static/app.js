@@ -762,7 +762,7 @@ async function refreshOpc() {
     const response = await fetch(`/api/opc?folder=${encodeURIComponent(state.opcFolder)}&q=${encodeURIComponent(query)}`);
     const data = await response.json();
     if (!data.ok) {
-      const html = `<tr><td colspan="4">${esc(data.error || "OPC UA is not ready.")}</td></tr>`;
+      const html = `<tr><td colspan="5">${esc(data.error || "OPC UA is not ready.")}</td></tr>`;
       if (body.dataset.html !== html) {
         body.dataset.html = html;
         body.innerHTML = html;
@@ -777,15 +777,16 @@ async function refreshOpc() {
             <td class="oid">${esc(item.value)}</td>
             <td>${esc(item.type)}</td>
             <td class="oid">${esc(item.nodeId)}</td>
+            <td class="oid">${esc(item.path || "")}</td>
           </tr>
-        `).join("") + (data.truncated ? `<tr><td colspan="4">Showing the first 300 tags. Use the filter to narrow them.</td></tr>` : "")
-      : `<tr><td colspan="4">No tags in ${esc(data.folder)}.</td></tr>`;
+        `).join("") + (data.truncated ? `<tr><td colspan="5">Showing the first 300 tags. Use the filter to narrow them.</td></tr>` : "")
+      : `<tr><td colspan="5">No tags in ${esc(data.folder)}.</td></tr>`;
     if (body.dataset.html !== html) {
       body.dataset.html = html;
       body.innerHTML = html;
     }
   } catch (_err) {
-    const html = `<tr><td colspan="4">Could not read the OPC UA server.</td></tr>`;
+    const html = `<tr><td colspan="5">Could not read the OPC UA server.</td></tr>`;
     if (body.dataset.html !== html) {
       body.dataset.html = html;
       body.innerHTML = html;

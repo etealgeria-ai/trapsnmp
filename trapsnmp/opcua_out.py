@@ -53,6 +53,25 @@ def _iso(value) -> str:
     return "" if value is None else str(value)
 
 
+def _node_path(key: str) -> str:
+    if key.startswith("Recent.") and key.count(".") >= 2:
+        _folder, slot, name = key.split(".", 2)
+        return f"/Objects/trapsnmp/Recent/Slot{slot}/{name}"
+    if key.startswith("Remote") and key[6:7].isdigit() and "." in key:
+        folder, name = key.split(".", 1)
+        return f"/Objects/trapsnmp/Radios/{folder}/{name}"
+    if key.startswith("Radios."):
+        rest = key[len("Radios.") :]
+        if "." not in rest:
+            return f"/Objects/trapsnmp/Radios/{rest}"
+        folder, name = rest.rsplit(".", 1)
+        return f"/Objects/trapsnmp/Radios/{folder}/{name}"
+    if key.startswith(("Latest.", "Gateway.", "Upstream.")):
+        folder, name = key.split(".", 1)
+        return f"/Objects/trapsnmp/{folder}/{name}"
+    return f"/Objects/trapsnmp/Tags/{key}"
+
+
 def _opc_text(value) -> tuple[str, str]:
     if isinstance(value, bool):
         return "Boolean", "true" if value else "false"
@@ -413,6 +432,7 @@ class OpcuaBridge:
                 {
                     "name": key.split(".")[-1] if "." in key else key,
                     "nodeId": f"ns={ns};s={key}",
+                    "path": _node_path(key),
                     "value": text,
                     "type": kind,
                 }
