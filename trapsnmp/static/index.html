@@ -629,7 +629,7 @@
         </label>
         <button type="submit" class="primary">Sign in</button>
         <p class="note" id="login-error"></p>
-        <p class="hint">Not secure stays until Windows trusts the trapsnmp authority. Turning the warning off does not remove it. Download <a href="/ca.cer">trapsnmp-ca.cer</a>, double-click it, choose Install Certificate, Local Machine, Trusted Root Certification Authorities, then quit Chrome completely.</p>
+        <p class="hint">Chrome says Not secure because Windows does not trust this console. Clicking through the warning leaves it that way. Download <a href="/trust-windows.bat">trust-windows.bat</a>, right-click it, choose Run as administrator, then quit Chrome completely and open the page again.</p>
       </form>
     </div>
     <script src="/static/app.js"></script>

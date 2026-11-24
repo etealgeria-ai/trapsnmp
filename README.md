@@ -62,18 +62,13 @@ The console password is `P@ssw0rd`. It is stored in `[console]` of `data/trapsnm
 
 `https://127.0.0.1:8888/` encrypts the password and the session cookie. `http://127.0.0.1:8888/` still works on the same port. If 8888 is also taken, set `TRAPSNMP_PORT` or `[console] port` and restart.
 
-Chrome shows **Not secure** until Windows trusts the trapsnmp authority. Allowing the warning does not turn that into a padlock. After the gateway has been started once:
+Chrome shows **Not secure** until Windows trusts the trapsnmp authority. Allowing the warning, or double-clicking the certificate into the wrong store, does not turn that into a padlock.
 
-1. Download [https://127.0.0.1:8888/ca.crt](https://127.0.0.1:8888/ca.crt). The same file is `data/https/ca.crt`. The browser saves it as `trapsnmp-ca.crt`.
-2. Open an Administrator PowerShell in the folder where that file was saved and run:
+1. Open `https://127.0.0.1:8888/trust-windows.bat` and save the file. The sign-in page has the same link.
+2. Right-click `trust-windows.bat` and choose **Run as administrator**. It puts the trapsnmp authority in Trusted Root Certification Authorities.
+3. Quit Chrome completely. Closing the tab is not enough. Then open `https://127.0.0.1:8888/` again.
 
-```powershell
-certutil -addstore Root trapsnmp-ca.crt
-```
-
-3. Quit Chrome completely, then open `https://127.0.0.1:8888/` again.
-
-The address bar then shows the lock. Until that authority is in Trusted Root, **Not secure** is normal. The authority certificate is valid for 15 years. The server certificate it signs is created on first start and is also valid for 15 years.
+The address bar then shows the lock. The authority is valid for 15 years, and so is the server certificate it signs.
 
 The RSSI sine stays stopped at startup. Start it from the Send page. Each step is 10 seconds.
 

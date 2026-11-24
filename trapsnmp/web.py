@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import hmac
 import ipaddress
@@ -91,7 +92,7 @@ def _password_ok(got: str, expected: str) -> bool:
 
 def _open_path(request: web.Request) -> bool:
     if request.method == "GET" and (
-        request.path in ("/", "/favicon.svg", "/ca.crt", "/ca.cer") or request.path.startswith("/static/")
+        request.path in ("/", "/favicon.svg", "/ca.crt", "/ca.cer", "/trust-windows.bat") or request.path.startswith("/static/")
     ):
         return True
     return request.method == "POST" and request.path == "/api/login"
@@ -202,6 +203,59 @@ async def handle_ca(request: web.Request) -> web.Response:
         body=path.read_bytes(),
         content_type="application/x-x509-ca-cert",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+async def handle_trust_bat(_request: web.Request) -> web.Response:
+    folder = data_dir() / "https"
+    cer = folder / "ca.cer"
+    if not cer.is_file():
+        crt = folder / "ca.crt"
+        if not crt.is_file():
+            return web.Response(status=404, text="Certificate is not ready yet.")
+        loaded = x509.load_pem_x509_certificate(crt.read_bytes())
+        cer.write_bytes(loaded.public_bytes(serialization.Encoding.DER))
+    encoded = base64.b64encode(cer.read_bytes()).decode("ascii")
+    lines = [encoded[index : index + 64] for index in range(0, len(encoded), 64)]
+    body = "\r\n".join(
+        [
+            "@echo off",
+            "net session >nul 2>&1",
+            "if not %ERRORLEVEL%==0 (",
+            "  powershell -NoProfile -Command \"Start-Process -FilePath '%~f0' -Verb RunAs\"",
+            "  exit /b",
+            ")",
+            "set \"B64=%TEMP%\\trapsnmp-ca.b64\"",
+            "set \"CER=%TEMP%\\trapsnmp-ca.cer\"",
+            "> \"%B64%\" (",
+            "echo -----BEGIN CERTIFICATE-----",
+            *[f"echo {line}" for line in lines],
+            "echo -----END CERTIFICATE-----",
+            ")",
+            "certutil -decode \"%B64%\" \"%CER%\"",
+            "if errorlevel 1 (",
+            "  echo Could not decode the authority.",
+            "  pause",
+            "  exit /b 1",
+            ")",
+            "certutil -addstore Root \"%CER%\"",
+            "if errorlevel 1 (",
+            "  echo Could not add the authority to Trusted Root.",
+            "  pause",
+            "  exit /b 1",
+            ")",
+            "echo.",
+            "echo Windows now trusts the trapsnmp console.",
+            "echo Quit Chrome completely, then open https://127.0.0.1:8888/ again.",
+            "echo Closing one tab is not enough.",
+            "pause",
+            "",
+        ]
+    )
+    return web.Response(
+        body=body.encode("ascii"),
+        content_type="application/octet-stream",
+        headers={"Content-Disposition": 'attachment; filename="trust-windows.bat"'},
     )
 
 
@@ -523,6 +577,7 @@ async def serve(service: Service) -> None:
     app.router.add_get("/", handle_index)
     app.router.add_get("/ca.crt", handle_ca)
     app.router.add_get("/ca.cer", handle_ca)
+    app.router.add_get("/trust-windows.bat", handle_trust_bat)
     app.router.add_get("/favicon.svg", handle_favicon)
     app.router.add_post("/api/login", handle_login)
     app.router.add_post("/api/logout", handle_logout)
