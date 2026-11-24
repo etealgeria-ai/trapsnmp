@@ -91,7 +91,7 @@ def _password_ok(got: str, expected: str) -> bool:
 
 def _open_path(request: web.Request) -> bool:
     if request.method == "GET" and (
-        request.path in ("/", "/favicon.svg", "/ca.crt") or request.path.startswith("/static/")
+        request.path in ("/", "/favicon.svg", "/ca.crt", "/ca.cer") or request.path.startswith("/static/")
     ):
         return True
     return request.method == "POST" and request.path == "/api/login"
@@ -191,14 +191,17 @@ async def handle_logout(request: web.Request) -> web.Response:
     return response
 
 
-async def handle_ca(_request: web.Request) -> web.Response:
-    path = data_dir() / "https" / "ca.crt"
+async def handle_ca(request: web.Request) -> web.Response:
+    folder = data_dir() / "https"
+    der = request.path.endswith(".cer")
+    path = folder / ("ca.cer" if der else "ca.crt")
     if not path.is_file():
         return web.Response(status=404, text="Certificate is not ready yet.")
+    filename = "trapsnmp-ca.cer" if der else "trapsnmp-ca.crt"
     return web.Response(
         body=path.read_bytes(),
         content_type="application/x-x509-ca-cert",
-        headers={"Content-Disposition": 'attachment; filename="trapsnmp-ca.crt"'},
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
@@ -495,6 +498,7 @@ async def serve(service: Service) -> None:
     app["login_failures"] = {}
     app.router.add_get("/", handle_index)
     app.router.add_get("/ca.crt", handle_ca)
+    app.router.add_get("/ca.cer", handle_ca)
     app.router.add_get("/favicon.svg", handle_favicon)
     app.router.add_post("/api/login", handle_login)
     app.router.add_post("/api/logout", handle_logout)
@@ -519,25 +523,38 @@ async def serve(service: Service) -> None:
         context = _console_ssl()
     except Exception:
         log.exception("HTTPS certificate failed; console stays on HTTP only")
-        site = web.TCPSite(runner, "0.0.0.0", 8080)
+        site = web.TCPSite(runner, "0.0.0.0", _console_port(service))
         await site.start()
-        log.info("console ready at http://127.0.0.1:8080/")
+        log.info("console ready at http://127.0.0.1:%s/", _console_port(service))
         await asyncio_forever()
         return
-    await _serve_http_and_https(runner.server, context)
+    await _serve_http_and_https(runner.server, context, _console_port(service))
 
 
-async def _serve_http_and_https(factory, ssl_context: ssl.SSLContext) -> None:
+async def _serve_http_and_https(factory, ssl_context: ssl.SSLContext, port: int) -> None:
     loop = asyncio.get_running_loop()
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.bind(("0.0.0.0", 8080))
+    sock.bind(("0.0.0.0", port))
     sock.listen(128)
     sock.setblocking(False)
-    log.info("console ready at http://127.0.0.1:8080/ and https://127.0.0.1:8080/")
+    log.info("console ready at http://127.0.0.1:%s/ and https://127.0.0.1:%s/", port, port)
     while True:
         client, _addr = await loop.sock_accept(sock)
         asyncio.create_task(_hand_console(loop, client, factory, ssl_context))
+
+
+def _console_port(service: Service) -> int:
+    raw = os.environ.get("TRAPSNMP_PORT", "").strip()
+    if raw:
+        try:
+            picked = int(raw)
+        except ValueError:
+            picked = 0
+        if 1 <= picked <= 65535:
+            return picked
+    port = int(getattr(service, "console_port", 8888) or 8888)
+    return port if 1 <= port <= 65535 else 8888
 
 
 def _peek_first(sock: socket.socket) -> bytes:
@@ -583,7 +600,7 @@ def _console_ssl() -> ssl.SSLContext:
         pass
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
-    context.load_cert_chain(cert_file, key_file)
+    context.load_cert_chain(folder / "chain.pem", key_file)
     return context
 
 
@@ -592,7 +609,7 @@ def _write_console_cert(cert_file: Path, key_file: Path) -> None:
     ca_key, ca_cert = _console_ca(folder)
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     names = [x509.DNSName("localhost")]
-    addresses = [ipaddress.IPv4Address("127.0.0.1")]
+    addresses = [ipaddress.IPv4Address("127.0.0.1"), ipaddress.IPv6Address("::1")]
     host = socket.gethostname() or ""
     if host and host.lower() != "localhost":
         try:
@@ -694,6 +711,7 @@ def _console_ca(folder: Path):
             )
         )
     cert_file.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+    (folder / "ca.cer").write_bytes(certificate.public_bytes(serialization.Encoding.DER))
     return key, certificate
 
 
@@ -702,9 +720,17 @@ def _cert_is_server(path: Path) -> bool:
         certificate = x509.load_pem_x509_certificate(path.read_bytes())
         usage = certificate.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value
         authority = x509.load_pem_x509_certificate((path.parent / "ca.crt").read_bytes())
+        names = certificate.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+        has_loopback = ipaddress.IPv6Address("::1") in names.get_values_for_type(x509.IPAddress)
     except Exception:
         return False
-    return x509.ExtendedKeyUsageOID.SERVER_AUTH in usage and certificate.issuer == authority.subject
+    return (
+        x509.ExtendedKeyUsageOID.SERVER_AUTH in usage
+        and certificate.issuer == authority.subject
+        and has_loopback
+        and (path.parent / "chain.pem").is_file()
+        and (path.parent / "ca.cer").is_file()
+    )
 
 
 async def asyncio_forever() -> None:

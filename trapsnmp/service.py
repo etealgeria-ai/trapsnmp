@@ -120,6 +120,7 @@ class Service:
         self._cert_task: asyncio.Task | None = None
         self.started_at = datetime.now(timezone.utc)
         self.console_password = "P@ssw0rd"
+        self.console_port = 8888
         load_settings(self)
         self.radios.on_save = self.persist
         if not getattr(self, "_console_from_file", False):

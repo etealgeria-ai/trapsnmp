@@ -7,7 +7,7 @@ if curl -sf -o /dev/null --max-time 2 http://127.0.0.1:8080/; then
 fi
 python3 -c "import asyncua, pysnmp" 2>/dev/null || pip3 install -q -r /workspace/requirements.txt
 pip3 install -q -U aiohttp
-python3 -m trapsnmp >>/tmp/trapsnmp.log 2>&1 &
+TRAPSNMP_PORT=8080 python3 -m trapsnmp >>/tmp/trapsnmp.log 2>&1 &
 i=0
 while [ "$i" -lt 40 ]; do
   if curl -sf -o /dev/null --max-time 1 http://127.0.0.1:8080/; then

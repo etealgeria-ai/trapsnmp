@@ -17,7 +17,7 @@ pip install -r requirements.txt
 python -m trapsnmp
 ```
 
-- Console: `http://127.0.0.1:8080/` and `https://127.0.0.1:8080/` — sign in with password `P@ssw0rd`
+- Console: `http://127.0.0.1:8888/` and `https://127.0.0.1:8888/` — sign in with password `P@ssw0rd`. Yokogawa CI Server already uses TCP 8080 and 8443 (CI Portal / CI View) and TCP 443 and 80, so the console stays on 8888. Set `TRAPSNMP_PORT`, or `port` under `[console]` in `data/trapsnmp.ini`, only if 8888 is also taken. Do not use 8080, 8443, 80, or 443.
 - SNMP traps: UDP 162, or 1162 if 162 is unavailable
 - OPC UA: `opc.tcp://127.0.0.1:4840/trapsnmp/`
 - Namespace: `urn:trapsnmp:snmp`
@@ -48,18 +48,18 @@ The console password is `P@ssw0rd`. It is stored in `[console]` of `data/trapsnm
 
 ## Console HTTPS
 
-`https://127.0.0.1:8080/` encrypts the password and the session cookie. `http://127.0.0.1:8080/` still works on the same port.
+`https://127.0.0.1:8888/` encrypts the password and the session cookie. `http://127.0.0.1:8888/` still works on the same port. If 8888 is also taken, set `TRAPSNMP_PORT` or `[console] port` and restart.
 
 Chrome shows **Not secure** until Windows trusts the trapsnmp authority. Allowing the warning does not turn that into a padlock. After the gateway has been started once:
 
-1. Download [https://127.0.0.1:8080/ca.crt](https://127.0.0.1:8080/ca.crt). The same file is `data/https/ca.crt`. The browser saves it as `trapsnmp-ca.crt`.
+1. Download [https://127.0.0.1:8888/ca.crt](https://127.0.0.1:8888/ca.crt). The same file is `data/https/ca.crt`. The browser saves it as `trapsnmp-ca.crt`.
 2. Open an Administrator PowerShell in the folder where that file was saved and run:
 
 ```powershell
 certutil -addstore Root trapsnmp-ca.crt
 ```
 
-3. Quit Chrome completely, then open `https://127.0.0.1:8080/` again.
+3. Quit Chrome completely, then open `https://127.0.0.1:8888/` again.
 
 The address bar then shows the lock. Until that authority is in Trusted Root, **Not secure** is normal. The authority certificate is valid for 15 years. The server certificate it signs is created on first start and is also valid for 15 years.
 
