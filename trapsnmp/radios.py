@@ -373,7 +373,7 @@ def slot_fields(row: dict | None) -> dict:
 
 class OrbitMaster:
     def __init__(self, on_update) -> None:
-        self.hosts = ["192.168.1.10", "", ""]
+        self.hosts = ["192.168.1.10", "192.168.1.20", "192.168.1.30"]
         self.community = "public"
         self.port = 161
         self.interval = 15

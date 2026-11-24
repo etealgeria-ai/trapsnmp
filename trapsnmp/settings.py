@@ -423,13 +423,16 @@ def _remote_row(item) -> dict:
 
 
 def _apply_master(master, item) -> None:
-    hosts = [
-        str(item.get("host") or "").strip(),
-        str(item.get("host2") or "").strip(),
-        str(item.get("host3") or "").strip(),
-    ]
-    if any(hosts):
-        master.hosts = hosts
+    hosts = list(master.hosts)
+    while len(hosts) < 3:
+        hosts.append("")
+    if str(item.get("host") or "").strip():
+        hosts[0] = str(item.get("host")).strip()
+    if "host2" in item:
+        hosts[1] = str(item.get("host2") or "").strip()
+    if "host3" in item:
+        hosts[2] = str(item.get("host3") or "").strip()
+    master.hosts = hosts[:3]
     community = str(item.get("community") or "").strip()
     if community:
         master.community = community
