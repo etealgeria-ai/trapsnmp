@@ -23,6 +23,8 @@ from trapsnmp.settings import ini_path, load as load_settings
 from trapsnmp.settings import save as save_settings
 from trapsnmp.snmp_in import SnmpTrapIn
 from trapsnmp.tasks import spawn
+from trapsnmp.win_service import apply as apply_windows_service
+from trapsnmp.win_service import status as windows_service_status
 
 log = logging.getLogger("trapsnmp")
 
@@ -414,6 +416,7 @@ class Service:
             "tags": self.tags.snapshot(),
             "radios": self.radio_view(),
             "sine": self.sine_view(),
+            "windowsService": windows_service_status(),
         }
 
     async def diagnose(self) -> dict:

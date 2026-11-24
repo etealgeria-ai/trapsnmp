@@ -161,6 +161,7 @@ function render(data) {
   renderAgent(data.agent);
   renderTags(data.tags);
   renderRadios(data.radios);
+  renderWindows(data.windowsService);
   if (state.view === "opc") refreshOpc();
   const sine = data.sine || {};
   const sineToggle = document.getElementById("sine-toggle");
@@ -870,6 +871,45 @@ document.getElementById("radio-form")?.addEventListener("submit", async (event) 
     setBench(intent === "poll" ? "Polled the LN master." : "Master settings saved.");
     await tick();
   } catch (err) {
+    setBench(err.message, true);
+  }
+});
+
+let serviceHold = 0;
+
+function renderWindows(info) {
+  const form = document.getElementById("service-form");
+  if (!form || !info) return;
+  const box = form.elements.enabled;
+  const note = document.getElementById("service-note");
+  const held = Date.now() < serviceHold;
+  if (box && !held) {
+    box.checked = !!info.enabled;
+    box.disabled = !info.supported;
+  }
+  if (note && !held) note.textContent = info.detail || "";
+}
+
+document.getElementById("service-form")?.addEventListener("change", async (event) => {
+  const form = event.currentTarget;
+  const enabled = form.elements.enabled.checked;
+  const note = document.getElementById("service-note");
+  serviceHold = Date.now() + 20000;
+  if (note) note.textContent = enabled ? "Asking Windows to install the service…" : "Asking Windows to remove the service…";
+  try {
+    const response = await fetch("/api/windows-service", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || "Could not change the Windows service");
+    if (note) note.textContent = body.windowsService?.detail || "";
+    setBench(enabled ? "Windows service requested." : "Windows service removal requested.");
+  } catch (err) {
+    form.elements.enabled.checked = !enabled;
+    serviceHold = 0;
+    if (note) note.textContent = err.message;
     setBench(err.message, true);
   }
 });

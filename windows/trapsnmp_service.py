@@ -26,6 +26,7 @@ def _launch() -> subprocess.Popen:
     env = os.environ.copy()
     env["TRAPSNMP_DATA"] = data
     env["PYTHONUNBUFFERED"] = "1"
+    env["TRAPSNMP_SERVICE"] = "1"
     log = open(os.path.join(data, "trapsnmp.log"), "a", encoding="utf-8")
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     return subprocess.Popen(

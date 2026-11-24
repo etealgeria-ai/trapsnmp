@@ -437,6 +437,30 @@ async def handle_radios(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "radios": service.radio_view()})
 
 
+async def handle_windows_service(request: web.Request) -> web.Response:
+    service: Service = request.app["service"]
+    try:
+        body = await request.json()
+    except Exception:
+        return _json_error("Expected JSON.")
+    if not isinstance(body, dict):
+        return _json_error("Expected a JSON object.")
+    enabled = bool(body.get("enabled"))
+    try:
+        from trapsnmp.win_service import apply
+
+        report = apply(enabled)
+    except ValueError as exc:
+        return _json_error(str(exc))
+    except Exception as exc:
+        log.exception("windows service change failed")
+        return _json_error(str(exc), 500)
+    service.windows_service = enabled
+    service.persist()
+    service._trace(report.get("detail") or ("Windows service on" if enabled else "Windows service off"))
+    return web.json_response({"ok": True, "windowsService": report})
+
+
 async def handle_tags(request: web.Request) -> web.Response:
     service: Service = request.app["service"]
     try:
@@ -513,6 +537,7 @@ async def serve(service: Service) -> None:
     app.router.add_post("/api/agent", handle_agent)
     app.router.add_post("/api/tags", handle_tags)
     app.router.add_post("/api/radios", handle_radios)
+    app.router.add_post("/api/windows-service", handle_windows_service)
     app.router.add_post("/api/sine", handle_sine)
     app.router.add_post("/api/readback", handle_readback)
     app.router.add_post("/api/upstream", handle_upstream)
