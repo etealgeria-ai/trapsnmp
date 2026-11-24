@@ -739,14 +739,12 @@ function opcTree() {
   const current = state.opcFolder;
   const button = (id, label, cls) =>
     `<button type="button" class="${cls}${id === current ? " selected" : ""}" data-opc="${esc(id)}">${esc(label)}</button>`;
-  const masters = state.opcRadios
-    ? ["Master1", "Master2", "Master3"].map((name) => {
-        const remotes = state.opcMaster === name
-          ? Array.from({ length: 255 }, (_, index) => button(`${name}.Remote${index + 1}`, `Remote${index + 1}`, "remote")).join("")
-          : "";
-        return button(name, name, "child") + remotes;
-      }).join("")
-    : "";
+  const masters = ["Master1", "Master2", "Master3"].map((name) => {
+    const remotes = state.opcMaster === name
+      ? Array.from({ length: 255 }, (_, index) => button(`${name}.Remote${index + 1}`, `Remote${index + 1}`, "remote")).join("")
+      : "";
+    return button(name, name, "master") + remotes;
+  }).join("");
   host.innerHTML = [
     button("trapsnmp", "trapsnmp", ""),
     button("Latest", "Latest", "child"),
@@ -804,12 +802,8 @@ document.getElementById("opc-tree")?.addEventListener("click", (event) => {
   const button = event.target.closest("[data-opc]");
   if (!button) return;
   const folder = button.dataset.opc;
-  if (folder === "Radios") {
-    state.opcRadios = !state.opcRadios;
-    if (!state.opcRadios) state.opcMaster = "";
-  }
+  if (folder === "Radios") state.opcMaster = "";
   if (folder === "Master1" || folder === "Master2" || folder === "Master3") {
-    state.opcRadios = true;
     state.opcMaster = state.opcMaster === folder ? "" : folder;
   }
   state.opcFolder = folder;

@@ -498,7 +498,8 @@ input, select {
 }
 
 .opc-tree button.child { padding-left: 18px; }
-.opc-tree button.remote { padding-left: 32px; }
+.opc-tree button.master { padding-left: 32px; }
+.opc-tree button.remote { padding-left: 48px; }
 .opc-tree button.selected { color: var(--brass); background: var(--surface-2); }
 
 .opc-main { min-width: 0; }

@@ -454,6 +454,19 @@ class OpcuaBridge:
                     "type": kind,
                 }
             )
+        if folder == "Radios":
+            for name in ("Master1", "Master2", "Master3"):
+                if query and query not in name.lower():
+                    continue
+                items.append(
+                    {
+                        "name": name,
+                        "nodeId": f"ns={ns};s={name}",
+                        "path": f"/Objects/trapsnmp/Radios/{name}",
+                        "value": "",
+                        "type": "Object",
+                    }
+                )
         return {
             "ok": True,
             "folder": folder,
