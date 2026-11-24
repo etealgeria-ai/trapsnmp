@@ -815,19 +815,22 @@ document.getElementById("opc-filter")?.addEventListener("input", () => {
 function renderRadios(radios) {
   if (!radios) return;
   const status = document.getElementById("radio-status");
+  const tab = state.radioTab || "Master1";
   if (status) {
     const when = radios.updatedAt ? `Last poll ${radios.updatedAt}` : "Not polled yet";
     const counts = radios.masterCounts || [];
     const summary = ["Master1", "Master2", "Master3"]
       .map((name, index) => `${name} ${counts[index] || 0}`)
       .join(" · ");
+    const ips = radios.hosts || [];
+    const tabIndex = tab === "Master2" ? 1 : tab === "Master3" ? 2 : 0;
+    const source = ips[tabIndex] || "not set";
     status.textContent = radios.error
       ? `${radios.error} · ${when}`
-      : `${summary} on ${radios.host || "no master"} · ${when}`;
+      : `${tab} reads SNMP traps from ${source}. ${summary}. ${when}`;
   }
   const note = document.getElementById("radio-note");
   if (note) note.textContent = radios.enabled ? `Polling every ${radios.interval}s` : "";
-  const tab = state.radioTab || "Master1";
   document.querySelectorAll("[data-radio-tab]").forEach((button) => {
     button.classList.toggle("active", button.dataset.radioTab === tab);
   });

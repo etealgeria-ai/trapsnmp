@@ -360,10 +360,9 @@ class Service:
             except Exception as exc:
                 self._trace(f"RSSI sine trap failed for {row['name']}: {exc}")
                 break
-        self.radios.stations = [rows, [dict(row) for row in rows], [dict(row) for row in rows]]
-        for master, group in enumerate(self.radios.stations, start=1):
-            for row in group:
-                row["master"] = f"GE Master Station {master}"
+        self.radios.stations[0] = rows
+        for row in self.radios.stations[0]:
+            row["master"] = self.radios.hosts[0] or "192.168.1.10"
         self.radios.error = None
         self.radios.updated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
         if self.opc.ready:
@@ -690,6 +689,14 @@ class Service:
         if station:
             record["masterStation"] = station
             record["message"] = f"{name} from {station} ({record['source']})"
+            changed = self.radios.apply_trap(
+                record["source"],
+                [(item["oid"], item["value"]) for item in varbinds],
+            )
+            if changed and self.opc.ready:
+                master_number, updates = changed
+                await self.opc.write_station_updates(master_number, updates)
+                self.persist(remotes_only=True)
         history = [record, *list(self.traps)]
         published = await self.opc.publish(record, history, self.counts)
         public = {key: value for key, value in record.items() if key not in ("received", "varbindsJson")}

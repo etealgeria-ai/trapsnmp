@@ -421,7 +421,7 @@
           <p class="index">01</p>
           <h2>GE Master Station</h2>
         </div>
-        <p class="hint">Up to three LN masters. Each one has its own OPC tags, Master1.Remote1 through Master1.Remote255, and the same for Master2 and Master3. Traps from these stations are accepted on UDP 162.</p>
+        <p class="hint">GE Master Station 1, 2, and 3 are separate trap sources. A trap from 192.168.1.10 updates Master1 only. A trap from 192.168.1.20 updates Master2 only. A trap from 192.168.1.30 updates Master3 only.</p>
         <form id="radio-form">
           <label class="field">
             <span>GE Master Station 1</span>
@@ -479,7 +479,7 @@
           <p class="index">01</p>
           <h2>Remotes</h2>
         </div>
-        <p class="hint" id="radio-status">Each master has its own remotes. Master1 is 192.168.1.10, Master2 is 192.168.1.20, and Master3 is 192.168.1.30.</p>
+        <p class="hint" id="radio-status">Master1 is filled by SNMP traps from GE Master Station 1. Master2 uses station 2. Master3 uses station 3. The trap source addresses are different.</p>
         <div class="actions" id="radio-tabs">
           <button type="button" class="nav-btn active" data-radio-tab="Master1">Master1</button>
           <button type="button" class="nav-btn" data-radio-tab="Master2">Master2</button>

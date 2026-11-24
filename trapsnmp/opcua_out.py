@@ -629,6 +629,16 @@ class OpcuaBridge:
                 log.exception("tag write failed for %s", address)
         return written
 
+    async def write_station_updates(self, master: int, updates: list[tuple[int, dict]]) -> None:
+        if not self.ready:
+            return
+        for slot, row in updates:
+            for name, value, kind in remote_opc_values(row):
+                try:
+                    await self._write(f"Master{master}.Remote{slot}.{name}", value, _TAG_TYPES[kind])
+                except Exception:
+                    log.exception("trap remote write failed for Master%s.Remote%s.%s", master, slot, name)
+
     async def write_rssi_wave(self, rows: list[dict]) -> None:
         await self.write_stations([rows, [], []])
 

@@ -411,6 +411,45 @@ class OrbitMaster:
                 return label
         return ""
 
+    def station_index(self, source: str) -> int | None:
+        source = (source or "").strip()
+        for index, host in enumerate(self.hosts):
+            if host and host == source:
+                return index
+        return None
+
+    def apply_trap(self, source: str, binds: list[tuple[str, object]]) -> tuple[int, list[tuple[int, dict]]] | None:
+        """Update one master from a trap. The source IP selects the master."""
+        index = self.station_index(source)
+        if index is None:
+            return None
+        incoming = rows_from_binds([(str(oid).lstrip("."), value) for oid, value in binds])
+        if not incoming:
+            return None
+        current = list(self.stations[index])
+        positions = {str(row.get("mac") or ""): slot for slot, row in enumerate(current) if row.get("mac")}
+        changed: list[tuple[int, dict]] = []
+        for row in incoming:
+            row["master"] = self.hosts[index]
+            row["source"] = source
+            mac = str(row.get("mac") or "")
+            if mac and mac in positions:
+                slot = positions[mac]
+                existing = current[slot]
+                for key, value in row.items():
+                    if value not in (None, ""):
+                        existing[key] = value
+                changed.append((slot + 1, existing))
+            elif len(current) < _MAX_REMOTES:
+                current.append(row)
+                changed.append((len(current), row))
+        if not changed:
+            return None
+        self.stations[index] = current
+        self.updated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        self.error = None
+        return index + 1, changed
+
     @property
     def remotes(self) -> list[dict]:
         return [row for group in self.stations for row in group]

@@ -402,9 +402,7 @@ def _apply(service, parser: configparser.ConfigParser) -> None:
             for row in loaded[0]:
                 if not row.get("master"):
                     row["master"] = hosts[0]
-        for index in (1, 2):
-            if not loaded[index]:
-                loaded[index] = [_clone_remote(row, index + 1, hosts) for row in loaded[0]]
+                row["source"] = hosts[0]
     service.radios.stations = loaded
     for master_index, rows in enumerate(loaded, start=1):
         for row in rows:
@@ -414,26 +412,6 @@ def _apply(service, parser: configparser.ConfigParser) -> None:
                     stats[key] = int(row[key])
             if stats:
                 service._sine_stats[(master_index, row.get("mac") or len(service._sine_stats))] = stats
-
-
-def _clone_remote(row: dict, master_index: int, hosts: list[str]) -> dict:
-    copy = dict(row)
-    copy["master"] = hosts[master_index - 1] if master_index - 1 < len(hosts) else ""
-    mac = str(copy.get("mac") or "")
-    parts = mac.split(":")
-    if len(parts) == 6:
-        parts[3] = f"{master_index:02X}"
-        copy["mac"] = ":".join(parts)
-        copy["address"] = copy["mac"]
-        copy["key"] = copy["mac"].replace(":", "")
-    ip = str(copy.get("ip") or "")
-    octets = ip.split(".")
-    if len(octets) == 4 and octets[0].isdigit():
-        octets[1] = str(master_index)
-        copy["ip"] = ".".join(octets)
-        if copy.get("allIp"):
-            copy["allIp"] = copy["ip"]
-    return copy
 
 
 def _remote_row(item) -> dict:
