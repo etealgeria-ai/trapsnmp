@@ -1,4 +1,4 @@
-const state = { selected: null, sending: false, view: "monitor", opcFolder: "Latest", opcRadios: false, opcMaster: "" };
+const state = { selected: null, sending: false, view: "monitor", opcFolder: "Latest", opcRadios: false, opcMaster: "", radioTab: "Master1" };
 
 function esc(value) {
   return String(value ?? "")
@@ -829,18 +829,22 @@ function renderRadios(radios) {
   }
   const note = document.getElementById("radio-note");
   if (note) note.textContent = radios.enabled ? `Polling every ${radios.interval}s` : "";
+  const tab = state.radioTab || "Master1";
+  document.querySelectorAll("[data-radio-tab]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.radioTab === tab);
+  });
   const head = document.getElementById("radio-head");
-  if (head && !head.childElementCount) {
-    head.innerHTML = `<th>Tag</th>${RADIO_COLUMNS.map(([label]) => `<th>${esc(label)}</th>`).join("")}`;
+  if (head) {
+    head.innerHTML = `<th>${esc(tab)}</th>${RADIO_COLUMNS.map(([label]) => `<th>${esc(label)}</th>`).join("")}`;
   }
   const body = document.getElementById("radio-rows");
   if (body) {
-    const slots = radios.slots || [];
+    const slots = (radios.slots || []).filter((row) => String(row.tag || "").startsWith(`${tab}.`));
     const cell = (value) => (value === null || value === undefined || value === "" ? "—" : esc(String(value)));
     body.innerHTML = slots.length
       ? slots.map((row) => `
           <tr>
-            <td class="oid">${esc(row.tag)}</td>
+            <td class="oid">${esc(String(row.tag || "").split(".").pop())}</td>
             ${RADIO_COLUMNS.map(([key]) => {
               const colored = key === "rssi" || key === "down" ? `rssi ${rssiClass(row[key])}` : "";
               const mono = key === "oid" || key === "remote_mac" || key === "remote_ip" ? "oid" : "";
@@ -849,7 +853,7 @@ function renderRadios(radios) {
             }).join("")}
           </tr>
         `).join("")
-      : `<tr><td colspan="${RADIO_COLUMNS.length + 1}">Tags are not ready yet.</td></tr>`;
+      : `<tr><td colspan="${RADIO_COLUMNS.length + 1}">No remotes on ${esc(tab)} yet.</td></tr>`;
   }
   const form = document.getElementById("radio-form");
   if (form && !(document.activeElement && form.contains(document.activeElement))) {
@@ -863,6 +867,13 @@ function renderRadios(radios) {
     form.elements.enabled.checked = !!radios.enabled;
   }
 }
+
+document.getElementById("radio-tabs")?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-radio-tab]");
+  if (!button) return;
+  state.radioTab = button.dataset.radioTab;
+  if (state.view === "radios") tick();
+});
 
 document.getElementById("radio-form")?.addEventListener("submit", async (event) => {
   event.preventDefault();

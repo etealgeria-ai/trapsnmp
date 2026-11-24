@@ -479,7 +479,12 @@
           <p class="index">01</p>
           <h2>Remotes</h2>
         </div>
-        <p class="hint" id="radio-status">Live values for Master1.Remote1 through Master3.Remote255. Each GE master station has its own 255 remotes.</p>
+        <p class="hint" id="radio-status">Each master has its own remotes. Master1 is 192.168.1.10, Master2 is 192.168.1.20, and Master3 is 192.168.1.30.</p>
+        <div class="actions" id="radio-tabs">
+          <button type="button" class="nav-btn active" data-radio-tab="Master1">Master1</button>
+          <button type="button" class="nav-btn" data-radio-tab="Master2">Master2</button>
+          <button type="button" class="nav-btn" data-radio-tab="Master3">Master3</button>
+        </div>
         <div class="table-wrap">
           <table>
             <thead>
