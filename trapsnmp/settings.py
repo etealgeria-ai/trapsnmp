@@ -37,6 +37,7 @@ _REMOTE_FIELDS = (
     "temp",
     "alarmed",
     "oid",
+    "master",
     "txPackets",
     "txBytes",
     "rxPackets",
@@ -163,7 +164,9 @@ def save(service) -> None:
         }
     master = service.radios
     parser["master"] = {
-        "host": master.host,
+        "host": master.hosts[0] if master.hosts else "",
+        "host2": master.hosts[1] if len(master.hosts) > 1 else "",
+        "host3": master.hosts[2] if len(master.hosts) > 2 else "",
         "community": master.community,
         "port": str(master.port),
         "interval": str(master.interval),
@@ -400,10 +403,14 @@ def _apply(service, parser: configparser.ConfigParser) -> None:
 
 
 def _apply_master(master, item) -> None:
-    host = str(item.get("host") or "").strip()
+    hosts = [
+        str(item.get("host") or "").strip(),
+        str(item.get("host2") or "").strip(),
+        str(item.get("host3") or "").strip(),
+    ]
+    if any(hosts):
+        master.hosts = hosts
     community = str(item.get("community") or "").strip()
-    if host:
-        master.host = host
     if community:
         master.community = community
     port = _int(item.get("port"), master.port)

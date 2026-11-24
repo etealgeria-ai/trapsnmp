@@ -28,6 +28,17 @@ log = logging.getLogger("trapsnmp.radios")
 
 ENTRY = "1.3.6.1.4.1.4130.10.2.5.1.2.2.1"
 _HOST = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.\-]{0,252}$")
+
+
+def _master_address(value: str, *, required: bool) -> str:
+    text = value.strip()
+    if not text:
+        if required:
+            raise ValueError("Master 1 address is required.")
+        return ""
+    if not _HOST.fullmatch(text):
+        raise ValueError("Each master address must be a hostname or IPv4 address.")
+    return text
 _MAX_REMOTES = 255
 
 # Names and numbers are from MDS-IF-LN-MIB (May 16, 2018).
@@ -103,6 +114,7 @@ OPC_TAGS = (
     ("rssi", "int"),
     ("down", "int"),
     ("if_index", "uint"),
+    ("master", "string"),
     ("oid", "string"),
 ) + tuple((name, _OPC_KIND[kind]) for _column, _key, name, kind in CONN_REM_COLUMNS)
 
@@ -113,6 +125,7 @@ SLOT_KEYS = (
     "rssi",
     "down",
     "if_index",
+    "master",
     "link",
     "ttl",
     "nicId",
@@ -337,6 +350,7 @@ def remote_opc_values(row: dict | None) -> list[tuple[str, object, str]]:
         "rssi": row.get("rssi"),
         "down": row.get("downRssi"),
         "if_index": row.get("ifIndex") or 0,
+        "master": row.get("master") or "",
         "oid": row.get("oid") or "",
     }
     for _column, key, name, _kind in CONN_REM_COLUMNS:
@@ -353,12 +367,13 @@ def slot_fields(row: dict | None) -> dict:
     values["remote_ip"] = None if ip in (None, "", "—") else ip
     values["down"] = row.get("downRssi")
     values["if_index"] = row.get("ifIndex")
+    values["master"] = row.get("master")
     return values
 
 
 class OrbitMaster:
     def __init__(self, on_update) -> None:
-        self.host = "192.168.1.10"
+        self.hosts = ["192.168.1.10", "", ""]
         self.community = "public"
         self.port = 161
         self.interval = 15
@@ -373,13 +388,26 @@ class OrbitMaster:
         self._snmp = None
         self._lock = asyncio.Lock()
 
+    @property
+    def host(self) -> str:
+        for item in self.hosts:
+            if item:
+                return item
+        return ""
+
+    @host.setter
+    def host(self, value: str) -> None:
+        self.hosts[0] = str(value or "").strip()
+
     def _save(self) -> None:
         if self.on_save:
             self.on_save()
 
     def snapshot(self) -> dict:
+        filled = [item for item in self.hosts if item]
         return {
-            "host": self.host,
+            "host": ", ".join(filled),
+            "hosts": list(self.hosts),
             "community": self.community,
             "port": self.port,
             "interval": self.interval,
@@ -396,22 +424,29 @@ class OrbitMaster:
         self,
         *,
         host: str,
+        host2: str = "",
+        host3: str = "",
         community: str,
         port: int,
         interval: int,
         enabled: bool,
     ) -> None:
-        host = host.strip()
+        hosts = [
+            _master_address(host, required=True),
+            _master_address(host2, required=False),
+            _master_address(host3, required=False),
+        ]
+        filled = [item for item in hosts if item]
+        if len(filled) != len(set(filled)):
+            raise ValueError("The three master addresses must be different.")
         community = community.strip()
-        if not _HOST.fullmatch(host):
-            raise ValueError("Master address must be a hostname or IPv4 address.")
         if not community or len(community) > 256:
             raise ValueError("Community must be 1 to 256 characters.")
         if not 1 <= int(port) <= 65535:
             raise ValueError("SNMP port must be from 1 to 65535.")
         if not 5 <= int(interval) <= 300:
             raise ValueError("Poll interval must be from 5 to 300 seconds.")
-        self.host = host
+        self.hosts = hosts
         self.community = community
         self.port = int(port)
         self.interval = int(interval)
@@ -445,11 +480,36 @@ class OrbitMaster:
         async with self._lock:
             self.polling = True
             try:
-                binds = await _walk(self._engine(), self.host, self.port, self.community)
-                self.remotes = rows_from_binds(binds)
-                if self.error:
-                    log.info("master poll recovered")
-                self.error = None
+                merged: list[dict] = []
+                seen: set[str] = set()
+                errors: list[str] = []
+                for host in self.hosts:
+                    if not host or len(merged) >= _MAX_REMOTES:
+                        continue
+                    try:
+                        binds = await _walk(self._engine(), host, self.port, self.community)
+                    except Exception as exc:
+                        errors.append(f"{host}: {exc}")
+                        continue
+                    for row in rows_from_binds(binds):
+                        row["master"] = host
+                        mac = str(row.get("mac") or "")
+                        if mac and mac in seen:
+                            continue
+                        if mac:
+                            seen.add(mac)
+                        merged.append(row)
+                        if len(merged) >= _MAX_REMOTES:
+                            break
+                if merged or not errors:
+                    self.remotes = merged
+                error = "; ".join(errors)[:300]
+                if error != (self.error or ""):
+                    if error:
+                        log.warning("master poll failed: %s", error)
+                    elif self.error:
+                        log.info("master poll recovered")
+                self.error = error or None
                 self.updated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
             except Exception as exc:
                 error = str(exc)[:300]

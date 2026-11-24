@@ -700,6 +700,7 @@ function rssiClass(value) {
 }
 
 const RADIO_COLUMNS = [
+  ["master", "GE master"],
   ["oid", "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.6"],
   ["remote_mac", "index mIfLnStatusConnRemAddress"],
   ["remote_ip", "1.3.6.1.4.1.4130.10.2.5.1.2.2.1.2"],
@@ -842,7 +843,10 @@ function renderRadios(radios) {
   }
   const form = document.getElementById("radio-form");
   if (form && !(document.activeElement && form.contains(document.activeElement))) {
-    form.elements.host.value = radios.host || "";
+    const hosts = radios.hosts || [];
+    form.elements.host.value = hosts[0] || radios.host || "";
+    form.elements.host2.value = hosts[1] || "";
+    form.elements.host3.value = hosts[2] || "";
     form.elements.community.value = radios.community || "public";
     form.elements.port.value = radios.port || 161;
     form.elements.interval.value = radios.interval || 15;
@@ -861,6 +865,8 @@ document.getElementById("radio-form")?.addEventListener("submit", async (event) 
       body: JSON.stringify({
         action: intent,
         host: form.elements.host.value,
+        host2: form.elements.host2.value,
+        host3: form.elements.host3.value,
         community: form.elements.community.value,
         port: Number(form.elements.port.value),
         interval: Number(form.elements.interval.value),

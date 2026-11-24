@@ -470,6 +470,8 @@ async def handle_radios(request: web.Request) -> web.Response:
         if action in ("save", "poll"):
             service.radios.configure(
                 host=str(body.get("host") or ""),
+                host2=str(body.get("host2") or ""),
+                host3=str(body.get("host3") or ""),
                 community=str(body.get("community") or "public"),
                 port=int(body.get("port") or 161),
                 interval=int(body.get("interval") or 15),

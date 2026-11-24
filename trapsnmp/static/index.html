@@ -421,11 +421,19 @@
           <p class="index">01</p>
           <h2>GE master station</h2>
         </div>
-        <p class="hint">The LN master the Orbit radios connect to. RSSI is read from this address. Every setting and the last remote entries are kept in data/trapsnmp.ini and loaded on the next start.</p>
+        <p class="hint">Up to three LN masters. RSSI is read from each address and the remotes are combined into Remote1 through Remote255. Each remote keeps the master IP it came from. Settings are stored in data/trapsnmp.ini.</p>
         <form id="radio-form">
           <label class="field">
-            <span>IP address</span>
+            <span>Master 1 IP address</span>
             <input name="host" spellcheck="false" value="192.168.1.10" required />
+          </label>
+          <label class="field">
+            <span>Master 2 IP address</span>
+            <input name="host2" spellcheck="false" placeholder="optional" />
+          </label>
+          <label class="field">
+            <span>Master 3 IP address</span>
+            <input name="host3" spellcheck="false" placeholder="optional" />
           </label>
           <label class="field">
             <span>Community</span>
