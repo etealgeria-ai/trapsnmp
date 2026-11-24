@@ -237,10 +237,12 @@ class Service:
         snap = self.radios.snapshot()
         index = self.opc.namespace_index or 0
         slots = []
-        stations = snap.get("stations") or [[], [], []]
-        slots = []
-        for master, remotes in enumerate(stations, start=1):
-            for slot, row in enumerate(remotes, start=1):
+        stations = list(snap.get("stations") or [[], [], []])
+        while len(stations) < 3:
+            stations.append([])
+        for master, remotes in enumerate(stations[:3], start=1):
+            for slot in range(1, REMOTE_TAG_COUNT + 1):
+                row = remotes[slot - 1] if slot <= len(remotes) else None
                 node = f"ns={index};s=Master{master}.Remote{slot}" if index else f"Master{master}.Remote{slot}"
                 if row is not None:
                     row["rssiNode"] = f"{node}.rssi"

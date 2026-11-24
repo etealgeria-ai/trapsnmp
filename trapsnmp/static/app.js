@@ -740,9 +740,7 @@ function opcTree() {
   const button = (id, label, cls) =>
     `<button type="button" class="${cls}${id === current ? " selected" : ""}" data-opc="${esc(id)}">${esc(label)}</button>`;
   const masters = ["Master1", "Master2", "Master3"].map((name) => {
-    const remotes = state.opcMaster === name
-      ? Array.from({ length: 255 }, (_, index) => button(`${name}.Remote${index + 1}`, `Remote${index + 1}`, "remote")).join("")
-      : "";
+    const remotes = Array.from({ length: 255 }, (_, index) => button(`${name}.Remote${index + 1}`, `Remote${index + 1}`, "remote")).join("");
     return button(name, name, "master") + remotes;
   }).join("");
   host.innerHTML = [
