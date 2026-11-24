@@ -477,8 +477,8 @@ async def handle_radios(request: web.Request) -> web.Response:
                 interval=int(body.get("interval") or 15),
                 enabled=bool(body.get("enabled")),
             )
+            service._allow_master_traps()
         if action == "poll":
-            await service.radios.poll()
     except (TypeError, ValueError) as exc:
         return _json_error(str(exc))
     except Exception as exc:

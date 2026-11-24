@@ -174,7 +174,8 @@ class TrapTags:
             self.device_ip = device_ip.strip()
 
     def accept(self, record: dict) -> bool:
-        if self.device_ip and str(record.get("source") or "") != self.device_ip:
+        from_master = bool(record.get("masterStation"))
+        if self.device_ip and not from_master and str(record.get("source") or "") != self.device_ip:
             return False
         if self.community and record.get("version") != "v3":
             if str(record.get("community") or "") != self.community:

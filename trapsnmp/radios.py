@@ -403,6 +403,14 @@ class OrbitMaster:
         if self.on_save:
             self.on_save()
 
+    def station_name(self, source: str) -> str:
+        source = (source or "").strip()
+        labels = ("GE Master Station 1", "GE Master Station 2", "GE Master Station 3")
+        for label, host in zip(labels, self.hosts):
+            if host and host == source:
+                return label
+        return ""
+
     def snapshot(self) -> dict:
         filled = [item for item in self.hosts if item]
         return {

@@ -124,6 +124,7 @@ class Service:
         self.console_password = "P@ssw0rd"
         self.console_port = 8888
         load_settings(self)
+        self._allow_master_traps()
         self.radios.on_save = self.persist
         if not getattr(self, "_console_from_file", False):
             self.persist()
@@ -133,6 +134,11 @@ class Service:
         if self.opc.readback_enabled or getattr(self, "_readback_reset", False):
             self.opc.readback_enabled = False
             self.persist()
+
+    def _allow_master_traps(self) -> None:
+        community = (self.radios.community or "").strip()
+        if community:
+            self.snmp.allow(community)
 
     def persist(self, *, remotes_only: bool = False) -> None:
         now = time.monotonic()
@@ -673,6 +679,10 @@ class Service:
             "varbinds": varbinds,
             "varbindsJson": json.dumps(varbinds, separators=(",", ":")),
         }
+        station = self.radios.station_name(record["source"])
+        if station:
+            record["masterStation"] = station
+            record["message"] = f"{name} from {station} ({record['source']})"
         history = [record, *list(self.traps)]
         published = await self.opc.publish(record, history, self.counts)
         public = {key: value for key, value in record.items() if key not in ("received", "varbindsJson")}
@@ -698,9 +708,12 @@ class Service:
             extra += ", kept off the trap tags"
         who = public["user"] if public["version"] == "v3" else (public["community"] or "—")
         how = f" {public['securityLevel']}" if public["version"] == "v3" else ""
+        origin = public["source"] or "unknown"
+        if public.get("masterStation"):
+            origin = f"{public['masterStation']} {origin}"
         self._trace(
             f"{public['version']} {public['kind']} {public['trapName']} "
-            f"from {public['source']} as {who}{how} "
+            f"from {origin} as {who}{how} "
             f"→ {published.get('written', 0)} node writes"
             f"{', event' if published.get('event') else ''}{extra}"
         )
