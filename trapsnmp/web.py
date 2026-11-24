@@ -5,16 +5,26 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import ipaddress
 import logging
+import os
 import secrets
+import socket
+import ssl
 import time
+from datetime import datetime, timedelta, timezone
 from html import escape
 from pathlib import Path
 
 from aiohttp import web
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import NameOID
 
 from trapsnmp.catalog import PRESETS
 from trapsnmp.service import Service
+from trapsnmp.settings import data_dir
 
 log = logging.getLogger("trapsnmp.web")
 
@@ -142,7 +152,15 @@ async def _check_login(request, service, body, failures, address, gate) -> web.R
         failures.pop(address, None)
         token = _new_session(request.app["sessions"])
     response = web.json_response({"ok": True})
-    response.set_cookie(_COOKIE, token, httponly=True, samesite="Lax", path="/", max_age=_SESSION_SECONDS)
+    response.set_cookie(
+        _COOKIE,
+        token,
+        httponly=True,
+        samesite="Lax",
+        path="/",
+        max_age=_SESSION_SECONDS,
+        secure=request.secure,
+    )
     return response
 
 
@@ -481,13 +499,136 @@ async def serve(service: Service) -> None:
     app.router.add_post("/api/radios", handle_radios)
     app.router.add_post("/api/sine", handle_sine)
     app.router.add_post("/api/readback", handle_readback)
+    app.router.add_post("/api/upstream", handle_upstream)
     app.router.add_static("/static", STATIC, show_index=False)
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", 8080)
-    await site.start()
-    log.info("console ready")
+    try:
+        context = _console_ssl()
+    except Exception:
+        log.exception("HTTPS certificate failed; console stays on HTTP only")
+        site = web.TCPSite(runner, "0.0.0.0", 8080)
+        await site.start()
+        log.info("console ready at http://127.0.0.1:8080/")
+    else:
+        loop = asyncio.get_running_loop()
+        await loop.create_server(lambda: _Either(runner.server, context), "0.0.0.0", 8080)
+        log.info("console ready at http://127.0.0.1:8080/ and https://127.0.0.1:8080/")
     await asyncio_forever()
+
+
+class _Either(asyncio.Protocol):
+    """Serve HTTP and HTTPS on the same port. TLS starts with 0x16; HTTP does not."""
+
+    def __init__(self, factory, ssl_context: ssl.SSLContext) -> None:
+        self.factory = factory
+        self.ssl_context = ssl_context
+        self.transport = None
+        self._switched = False
+
+    def connection_made(self, transport) -> None:
+        self.transport = transport
+
+    def data_received(self, data: bytes) -> None:
+        if self._switched or self.transport is None:
+            return
+        self._switched = True
+        self.transport.pause_reading()
+        if data[:1] == b"\x16":
+            asyncio.get_running_loop().create_task(self._tls(data))
+            return
+        proto = self.factory()
+        proto.connection_made(self.transport)
+        self.transport.set_protocol(proto)
+        proto.data_received(data)
+        self.transport.resume_reading()
+
+    async def _tls(self, data: bytes) -> None:
+        loop = asyncio.get_running_loop()
+        transport = self.transport
+        inner = self.factory()
+        waiter = loop.create_future()
+        ssl_protocol = asyncio.sslproto.SSLProtocol(
+            loop,
+            inner,
+            self.ssl_context,
+            waiter,
+            server_side=True,
+            ssl_handshake_timeout=30,
+        )
+        try:
+            transport.set_protocol(ssl_protocol)
+            ssl_protocol.connection_made(transport)
+            ssl_protocol.data_received(data)
+            transport.resume_reading()
+            await waiter
+        except Exception:
+            log.warning("HTTPS handshake failed")
+            try:
+                transport.close()
+            except Exception:
+                pass
+
+    def connection_lost(self, exc) -> None:
+        return None
+
+
+def _console_ssl() -> ssl.SSLContext:
+    folder = data_dir() / "https"
+    folder.mkdir(parents=True, exist_ok=True)
+    cert_file = folder / "cert.pem"
+    key_file = folder / "key.pem"
+    if not cert_file.is_file() or not key_file.is_file():
+        _write_console_cert(cert_file, key_file)
+        log.info("Console HTTPS certificate is %s", cert_file)
+    try:
+        os.chmod(key_file, 0o600)
+    except OSError:
+        pass
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.load_cert_chain(cert_file, key_file)
+    return context
+
+
+def _write_console_cert(cert_file: Path, key_file: Path) -> None:
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    names = [x509.DNSName("localhost")]
+    addresses = [ipaddress.IPv4Address("127.0.0.1")]
+    host = socket.gethostname() or ""
+    if host and host.lower() != "localhost":
+        try:
+            names.append(x509.DNSName(host))
+        except ValueError:
+            pass
+        try:
+            addresses.append(ipaddress.ip_address(socket.gethostbyname(host)))
+        except (OSError, ValueError):
+            pass
+    alt = list(names) + [x509.IPAddress(item) for item in dict.fromkeys(addresses)]
+    now = datetime.now(timezone.utc)
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "trapsnmp")]))
+        .issuer_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "trapsnmp")]))
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=5))
+        .not_valid_after(now + timedelta(days=15 * 365))
+        .add_extension(x509.SubjectAlternativeName(alt), critical=False)
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .sign(key, hashes.SHA256())
+    )
+    descriptor = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "wb") as handle:
+        handle.write(
+            key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
+        )
+    cert_file.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
 
 
 async def asyncio_forever() -> None:
