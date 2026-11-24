@@ -242,7 +242,9 @@ async def handle_readback(request: web.Request) -> web.Response:
     except Exception as exc:
         return _json_error(str(exc) or "Could not change the internal session.")
     service.persist()
-    return web.json_response({"ok": True, "enabled": service.opc.readback_enabled})
+    stopped = not service.opc.readback_enabled
+    service._trace("Internal readback stopped" if stopped else "Internal readback started")
+    return web.json_response({"ok": True, "enabled": service.opc.readback_enabled, "stopped": stopped})
 
 
 async def handle_opc(request: web.Request) -> web.Response:

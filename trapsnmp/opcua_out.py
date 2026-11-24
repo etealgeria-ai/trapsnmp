@@ -292,9 +292,11 @@ class OpcuaBridge:
             self.readback_enabled = bool(enabled)
             if not self.readback_enabled:
                 await self._drop_reader()
+                log.info("Internal OPC UA readback session stopped")
                 return
             if self.ready and self._reader is None:
                 await self._connect_reader()
+                log.info("Internal OPC UA readback session started")
 
     async def readback(self) -> dict:
         if not self.readback_enabled:
@@ -698,9 +700,17 @@ class OpcuaBridge:
         await self.nodes[key].write_value(value, variant)
 
     async def _connect_reader(self) -> None:
+        if not self.readback_enabled or self._reader is not None:
+            return
         client = Client(self.endpoint)
         client.session_timeout = 600_000
         await client.connect()
+        if not self.readback_enabled:
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            return
         self._reader = client
 
     async def _drop_reader(self) -> None:
@@ -713,9 +723,12 @@ class OpcuaBridge:
                 pass
 
     async def _read_keys(self, keys: tuple[str, ...]) -> dict:
+        if not self.readback_enabled:
+            raise RuntimeError("Internal readback is off")
         if self._reader is None:
             await self._connect_reader()
-        assert self._reader is not None
+        if self._reader is None:
+            raise RuntimeError("Internal readback is off")
         out = {}
         for key in keys:
             value = await self._reader.get_node(self.node_ids[key]).read_value()

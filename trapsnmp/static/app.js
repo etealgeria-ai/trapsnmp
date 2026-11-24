@@ -105,18 +105,7 @@ function render(data) {
   renderUsers(snmp.users || []);
 
   document.getElementById("opc-endpoint").textContent = opc.ready ? opc.endpoint : (opc.error || "Starting");
-  const readbackOn = opc.readback !== false;
-  const readbackButton = document.getElementById("readback-toggle");
-  const readbackState = document.getElementById("readback-state");
-  if (readbackButton) {
-    readbackButton.dataset.on = readbackOn ? "1" : "0";
-    readbackButton.textContent = readbackOn ? "Deactivate" : "Activate";
-  }
-  if (readbackState) {
-    readbackState.textContent = readbackOn
-      ? "Internal anonymous session is on"
-      : "Internal anonymous session is off";
-  }
+  paintReadback(opc.readback !== false);
   document.getElementById("opc-ns").textContent = opc.namespace || "urn:trapsnmp:snmp";
   document.getElementById("opc-node").textContent = opc.nodes?.trapOid || "—";
   document.getElementById("opc-object").textContent = opc.nodes?.object || "—";
@@ -219,7 +208,7 @@ function renderDiag(data) {
     check(losses.length ? "warn" : "pass", "Lost traps", losses.length ? losses.map(([n, why]) => `${n} ${why}`).join(" · ") : "None dropped or rejected"),
     check(opc.ready, "OPC UA server", opc.ready ? `${opc.endpoint} · ${opc.security}` : (opc.error || "Starting")),
     check(data.agent?.listening, "SNMP agent", data.agent?.listening ? `UDP ${data.agent.port} · ${data.agent.objectId}` : (data.agent?.error || "Not listening")),
-    check(readback.enabled === false ? "warn" : readback.ok, "Client read", readback.enabled === false ? "Internal readback is off" : (readback.ok ? "Latest read succeeded" : (readback.error || "No read"))),
+    check(readback.enabled === false ? "warn" : readback.ok, "Internal session", readback.enabled === false ? "Stopped: yes" : "Stopped: no"),
   ];
   if (readback.enabled === false) {
     rows.push(check("warn", "Latest node", "Internal readback is off"));
@@ -360,6 +349,19 @@ function setBench(message, bad) {
     note.className = id === "flash"
       ? (bad ? "note flash bad" : "note flash")
       : (bad ? "note bad" : "note");
+  }
+}
+
+function paintReadback(on) {
+  const button = document.getElementById("readback-toggle");
+  const state = document.getElementById("readback-state");
+  if (button) {
+    button.dataset.on = on ? "1" : "0";
+    button.textContent = on ? "Stop" : "Start";
+  }
+  if (state) {
+    state.textContent = on ? "Stopped: no" : "Stopped: yes";
+    state.className = on ? "note bad" : "note";
   }
 }
 
@@ -563,7 +565,8 @@ document.getElementById("readback-toggle")?.addEventListener("click", async () =
   const button = document.getElementById("readback-toggle");
   button.disabled = true;
   try {
-    await post("/api/readback", { enabled: button.dataset.on !== "1" });
+    const saved = await post("/api/readback", { enabled: button.dataset.on !== "1" });
+    paintReadback(saved.enabled !== false);
     await tick();
   } catch (err) {
     setBench(err.message, true);
@@ -635,6 +638,8 @@ document.getElementById("forward-form").addEventListener("submit", async (event)
 
 document.getElementById("stop-forward").addEventListener("click", async () => {
   try {
+    const saved = await post("/api/readback", { enabled: false });
+    paintReadback(saved.enabled !== false);
     await post("/api/upstream", {
       enabled: false,
       endpoint: document.getElementById("up-endpoint").value.trim(),
